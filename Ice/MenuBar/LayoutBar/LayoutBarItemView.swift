@@ -340,9 +340,11 @@ final class LayoutBarItemView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         if !isDraggingPlaceholder {
             if #available(macOS 27.0, *) { drawThumbnailBackgroundAndLabel() }
-            if displayedImageIsTemplate,
-               let image = displayedImage?.cgImage(forProposedRect: nil, context: nil, hints: nil),
-               let context = NSGraphicsContext.current?.cgContext {
+            if
+                displayedImageIsTemplate,
+                let image = displayedImage?.cgImage(forProposedRect: nil, context: nil, hints: nil),
+                let context = NSGraphicsContext.current?.cgContext
+            {
                 context.saveGState()
                 context.clip(to: displayedImageRect, mask: image)
                 context.setFillColor(NSColor.labelColor.withAlphaComponent(isEnabled ? 1 : 0.67).cgColor)
@@ -497,8 +499,10 @@ final class LayoutBarItemView: NSView {
             super.mouseUp(with: event)
             return
         }
-        if let root = window?.contentView,
-           let target = LayoutBarPaddingView.localDropTarget(in: root, at: event.locationInWindow) {
+        if
+            let root = window?.contentView,
+            let target = LayoutBarPaddingView.localDropTarget(in: root, at: event.locationInWindow)
+        {
             target.acceptLocalDrop(item: item, at: event.locationInWindow)
         }
         finishLocalDrag()

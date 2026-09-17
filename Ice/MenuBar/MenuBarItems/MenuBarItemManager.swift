@@ -401,10 +401,12 @@ extension MenuBarItemManager {
         // An ordinary click does not need a fixed settling delay or an AX
         // walk through other applications when our native pair is already
         // ready. Never use saved positions or retained frames for this check.
-        if let displayID,
-           !controller.isLayoutEditing,
-           !appState.settings.advanced.enableAlwaysHiddenSection,
-           !Task.isCancelled {
+        if
+            let displayID,
+            !controller.isLayoutEditing,
+            !appState.settings.advanced.enableAlwaysHiddenSection,
+            !Task.isCancelled
+        {
             // Normally ready in this event turn. A freshly hosted scene may
             // need one or two display frames, not an unconditional 200 ms.
             for attempt in 0 ..< 3 {
@@ -456,16 +458,19 @@ extension MenuBarItemManager {
             ) else { return false }
             snapshot = await currentMacOS27ReorderSnapshot(appState: appState)
         }
-        guard !Task.isCancelled,
-              let currentIce = snapshot.first(matching: .visibleControlItem),
-              let currentBoundary = snapshot.first(matching: .nativeBoundary(for: .hidden)),
-              MacOS27NativeBoundary.side(of: currentBoundary.bounds, relativeTo: currentIce.bounds) == .left,
-              MacOS27NativeBoundary.isImmediatelyBefore(
+        guard
+            !Task.isCancelled,
+            let currentIce = snapshot.first(matching: .visibleControlItem),
+            let currentBoundary = snapshot.first(matching: .nativeBoundary(for: .hidden)),
+            MacOS27NativeBoundary.side(of: currentBoundary.bounds, relativeTo: currentIce.bounds) == .left,
+            MacOS27NativeBoundary.isImmediatelyBefore(
                 currentBoundary.tag,
                 currentIce.tag,
                 in: snapshot.sorted { $0.bounds.minX < $1.bounds.minX }.map(\.tag)
-              )
-        else { return false }
+            )
+        else {
+            return false
+        }
         guard updatingCache else { return true }
         let liveItems = snapshot.filter { $0.canBeHidden && !$0.isSystemClone && !$0.isControlItem }
         let refreshed = controller.makeCache(
@@ -481,12 +486,16 @@ extension MenuBarItemManager {
     private func nativeHidingBoundaryIsReady(on displayID: CGDirectDisplayID) -> Bool {
         let items = MacOS27MenuBarItemProvider.ownMenuBarItems()
         let boundaryTag = MenuBarItemTag.nativeBoundary(for: .hidden)
-        guard NSScreen.screens.contains(where: { $0.displayID == displayID }),
-              let boundary = items.first(matching: boundaryTag),
-              let ice = items.first(matching: .visibleControlItem),
-              MacOS27NativeBoundary.canCheckImmediateHide(
-                  boundary: boundary.bounds, control: ice.bounds, display: CGDisplayBounds(displayID)
-              ) else { return false }
+        guard
+            NSScreen.screens.contains(where: { $0.displayID == displayID }),
+            let boundary = items.first(matching: boundaryTag),
+            let ice = items.first(matching: .visibleControlItem),
+            MacOS27NativeBoundary.canCheckImmediateHide(
+                boundary: boundary.bounds, control: ice.bounds, display: CGDisplayBounds(displayID)
+            )
+        else {
+            return false
+        }
         // This path only resizes our own status item; it sends no input. The
         // system-wide hit map can still describe the previous native layout
         // after our owner geometry has settled, so it must not gate a resize.
@@ -1622,10 +1631,13 @@ extension MenuBarItemManager {
 
         var snapshot = contextItems
         for _ in 0 ..< 2 {
-            guard !Task.isCancelled,
-                  let liveItem = snapshot.first(matching: item.tag),
-                  let liveTarget = snapshot.first(matching: destination.targetItem.tag)
-            else { return false }
+            guard
+                !Task.isCancelled,
+                let liveItem = snapshot.first(matching: item.tag),
+                let liveTarget = snapshot.first(matching: destination.targetItem.tag)
+            else {
+                return false
+            }
             guard NSScreen.screens.contains(where: {
                 MacOS27NativeBoundary.canDrag(
                     from: liveItem.bounds, to: liveTarget.bounds, on: CGDisplayBounds($0.displayID)
@@ -1693,9 +1705,12 @@ extension MenuBarItemManager {
                 try? await Task.sleep(for: .milliseconds(80))
                 guard !Task.isCancelled else { return false }
                 snapshot = await currentMacOS27ReorderSnapshot(appState: appState)
-                guard let moved = snapshot.first(matching: item.tag),
-                      let target = snapshot.first(matching: destination.targetItem.tag)
-                else { continue }
+                guard
+                    let moved = snapshot.first(matching: item.tag),
+                    let target = snapshot.first(matching: destination.targetItem.tag)
+                else {
+                    continue
+                }
                 let refreshed: MoveDestination = switch destination {
                 case .leftOfItem: .leftOfItem(target)
                 case .rightOfItem: .rightOfItem(target)

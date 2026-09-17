@@ -15,8 +15,10 @@ final class LayoutBarPaddingView: NSView {
     /// Only inspect views in Ice's own Settings window; no global input monitor.
     static func localDropTarget(in view: NSView, at windowPoint: CGPoint) -> LayoutBarPaddingView? {
         guard !view.isHiddenOrHasHiddenAncestor else { return nil }
-        if let target = view as? LayoutBarPaddingView,
-           target.visibleRect.contains(target.convert(windowPoint, from: nil)) {
+        if
+            let target = view as? LayoutBarPaddingView,
+            target.visibleRect.contains(target.convert(windowPoint, from: nil))
+        {
             return target
         }
         for child in view.subviews {
@@ -60,8 +62,10 @@ final class LayoutBarPaddingView: NSView {
         let insertion = localInsertion(for: item, at: windowPoint)
         // Dropping an item back into its own position is a no-op, including
         // an otherwise empty row. Never start a native drag for this case.
-        if let originalIndex = arrangedViews.firstIndex(where: { $0.item.tag == item.tag }),
-           originalIndex == insertion.index {
+        if
+            let originalIndex = arrangedViews.firstIndex(where: { $0.item.tag == item.tag }),
+            originalIndex == insertion.index
+        {
             return
         }
         let destination: MenuBarItemManager.MoveDestination?

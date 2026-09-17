@@ -280,8 +280,10 @@ final class MenuBarItemImageCache: ObservableObject {
                     )
                 }
             }
-            if let capture = await ScreenCapture.captureMenuBarDisplayStrip(displayID: displayID),
-               isPlausibleMacOS27Capture(capture) {
+            if
+                let capture = await ScreenCapture.captureMenuBarDisplayStrip(displayID: displayID),
+                isPlausibleMacOS27Capture(capture)
+            {
                 MacOS27GlyphDebug.write(capture.image, name: "strip")
                 // A drag can occur while the screenshot is being produced.
                 // Only associate pixels with an item whose frame stayed put.
@@ -379,8 +381,12 @@ final class MenuBarItemImageCache: ObservableObject {
                 continue
             }
 
-            guard let image = capture.image.cropping(to: cropRect),
-                  !image.isTransparent(alphaThreshold: 0.05) else { continue }
+            guard
+                let image = capture.image.cropping(to: cropRect),
+                !image.isTransparent(alphaThreshold: 0.05)
+            else {
+                continue
+            }
 
             if MacOS27GlyphDebug.isEnabled {
                 MacOS27GlyphDebug.write(image, name: "\(item.tag)-raw")
@@ -484,8 +490,13 @@ final class MenuBarItemImageCache: ObservableObject {
         }
         guard !Task.isCancelled, appState.itemManager.itemCache.displayID == displayID else { return }
         if #available(macOS 27.0, *) {
-            guard controller.isLayoutEditing, !controller.isReorderInProgress,
-                  controller.interactionGeneration == generation else { return }
+            guard
+                controller.isLayoutEditing,
+                !controller.isReorderInProgress,
+                controller.interactionGeneration == generation
+            else {
+                return
+            }
         }
         let validTags = Set(appState.itemManager.itemCache.managedItems.map(\.tag))
         var updatedImages = images.filter { validTags.contains($0.key) }

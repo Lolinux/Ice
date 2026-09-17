@@ -389,9 +389,11 @@ final class MenuBarManager: ObservableObject {
             return false
         }
         for section in [MenuBarSection.Name.hidden, .alwaysHidden] where nativeHiding.isConcealing(section) {
-            if let spacer = items.first(matching: .nativeBoundary(for: section)),
-               strip.contains(spacer.bounds),
-               spacer.bounds.minX >= ice.bounds.minX {
+            if
+                let spacer = items.first(matching: .nativeBoundary(for: section)),
+                strip.contains(spacer.bounds),
+                spacer.bounds.minX >= ice.bounds.minX
+            {
                 return false
             }
         }
