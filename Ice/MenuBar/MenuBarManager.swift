@@ -56,6 +56,12 @@ final class MenuBarManager: ObservableObject {
     private var nativeConcealmentTask: Task<Void, Never>?
     private var nativeConcealmentCheckTask: Task<Void, Never>?
     private var lastNativeVisibilityDecision: String?
+    /// The time of the last change to which items the spacers conceal.
+    private var lastNativeConcealmentChange: ContinuousClock.Instant?
+    private var deferredNativeVisibilityTask: Task<Void, Never>?
+    /// The minimum time between concealment changes, long enough for
+    /// MenuBarAgent's overflow animation to finish.
+    private static let nativeConcealmentChangeInterval = Duration.milliseconds(400)
     private var nativeVisibilityGeneration: UInt64 = 0
     private var nativeDragVisibility = MacOS27NativeDragVisibilityState()
     /// The time of the user's most recent explicit section toggle. Ice only
@@ -136,6 +142,21 @@ final class MenuBarManager: ObservableObject {
             return
         }
 
+        // Coalesce rapid toggles. MenuBarAgent animates every overflow change,
+        // and starting another one mid-animation leaves items flashing. The
+        // control item's state still updates immediately; the latest requested
+        // state is applied once the previous change has finished animating.
+        let changesConcealment = hideHidden != nativeHiding.isConcealing(.hidden) ||
+            hideAlwaysHidden != nativeHiding.isConcealing(.alwaysHidden)
+        if changesConcealment, let lastChange = lastNativeConcealmentChange {
+            let elapsed = lastChange.duration(to: .now)
+            if elapsed < Self.nativeConcealmentChangeInterval {
+                logNativeVisibilityDecision("waiting for the previous change to finish animating")
+                scheduleDeferredNativeVisibilitySync(after: Self.nativeConcealmentChangeInterval - elapsed)
+                return
+            }
+        }
+
         if hideHidden, !nativeHiding.isConcealing(.hidden) {
             guard nativeConcealmentTask == nil else {
                 logNativeVisibilityDecision("hide already in progress")
@@ -179,6 +200,7 @@ final class MenuBarManager: ObservableObject {
                     screen: screen,
                     controlFrame: currentIceButtonFrame()
                 )
+                lastNativeConcealmentChange = .now
                 macOS27Controller.isConcealingItems = true
                 logNativeVisibilityDecision("hidden: \(nativeHiding.debugDescription(for: .hidden))")
                 scheduleNativeConcealmentCheck(screen: screen)
@@ -189,13 +211,12 @@ final class MenuBarManager: ObservableObject {
         if !hideHidden { cancelNativeConcealment() }
         let wasConcealing = nativeHiding.isConcealing(.hidden) || nativeHiding.isConcealing(.alwaysHidden)
         nativeHiding.setHidden(hideAlwaysHidden, section: .alwaysHidden, anchorPosition: alwaysAnchor, screen: screen)
-        nativeHiding.setHidden(
-            hideHidden,
-            section: .hidden,
-            anchorPosition: controlPosition,
-            screen: screen,
-            controlFrame: hideHidden ? currentIceButtonFrame() : nil
-        )
+        // Keep an already-concealing spacer at its current length. Resizing it
+        // after Ice's button moves makes the whole bar reflow again.
+        nativeHiding.setHidden(hideHidden, section: .hidden, anchorPosition: controlPosition, screen: screen)
+        if changesConcealment {
+            lastNativeConcealmentChange = .now
+        }
         macOS27Controller.isConcealingItems = hideHidden || hideAlwaysHidden
         logNativeVisibilityDecision(
             "applied: hidden=\(hideHidden), alwaysHidden=\(hideAlwaysHidden), " +
@@ -257,6 +278,18 @@ final class MenuBarManager: ObservableObject {
     @available(macOS 27.0, *)
     private func currentIceButtonFrame() -> CGRect? {
         MacOS27MenuBarItemProvider.ownMenuBarItems().first(matching: .visibleControlItem)?.bounds
+    }
+
+    /// Applies the latest requested visibility once the given delay has passed.
+    @available(macOS 27.0, *)
+    private func scheduleDeferredNativeVisibilitySync(after delay: Duration) {
+        guard deferredNativeVisibilityTask == nil else { return }
+        deferredNativeVisibilityTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard let self else { return }
+            deferredNativeVisibilityTask = nil
+            syncNativeVisibility()
+        }
     }
 
     /// Logs a macOS 27 visibility decision when it differs from the last one,
