@@ -795,22 +795,27 @@ extension MenuBarItemManager {
         source.localEventsSuppressionInterval = 0.25
     }
 
-    /// Waits for the user to stop typing, pointing, and holding modifiers
-    /// or buttons before a native Command-drag, giving up after a timeout.
+    /// Waits for the user to stop typing and holding modifiers or buttons
+    /// before a native Command-drag, giving up after a timeout.
+    ///
+    /// Pointer movement is allowed: local input is suppressed during the
+    /// drag, and Layout drags start while the user is still pointing.
     @available(macOS 27.0, *)
     private nonisolated func waitForUserToPauseInputForNativeDrag() async throws {
         let deadline = ContinuousClock.now + .seconds(5)
         while true {
             try Task.checkCancellation()
+            let modifiers = NSEvent.modifierFlags.intersection([.command, .option, .control, .shift])
+            let isButtonPressed = MouseHelpers.isButtonPressed()
             let secondsSinceKeyDown = CGEventSource.secondsSinceLastEventType(
                 .combinedSessionState,
                 eventType: .keyDown
             )
-            if hasUserPausedInput(for: .milliseconds(250)), secondsSinceKeyDown >= 0.5 {
+            if modifiers.isEmpty, !isButtonPressed, secondsSinceKeyDown >= 0.5 {
                 return
             }
             guard ContinuousClock.now < deadline else {
-                logger.notice("Skipping native drag because the user did not pause input")
+                logger.notice("Skipping native drag: modifiers=\(modifiers.rawValue), button=\(isButtonPressed), secondsSinceKeyDown=\(secondsSinceKeyDown)")
                 throw EventError.cannotComplete
             }
             try await Task.sleep(for: .milliseconds(50))
