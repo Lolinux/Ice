@@ -139,6 +139,28 @@ final class MacOS27NativeMenuBarHiding {
         if !spacer.item.isVisible { spacer.item.isVisible = true }
     }
 
+    /// The current length of a section's spacer, if it has one.
+    func spacerLength(for section: MenuBarSection.Name) -> CGFloat? {
+        spacers[section]?.item.length
+    }
+
+    /// Sets a section's spacer to an explicit length.
+    ///
+    /// The photo pass uses this to give back the menu bar space a few items at
+    /// a time, so macOS draws them long enough to be photographed.
+    @available(macOS 27.0, *)
+    func setConcealingLength(_ length: CGFloat, section: MenuBarSection.Name, anchorPosition: CGFloat) {
+        prepare(section: section, anchorPosition: anchorPosition)
+        guard let spacer = spacers[section] else { return }
+        let clamped = max(1, length)
+        if spacer.item.length != clamped {
+            spacer.item.length = clamped
+        }
+        if !spacer.item.isVisible {
+            spacer.item.isVisible = true
+        }
+    }
+
     /// Returns a spacer length that fills the space available to the left of
     /// the item at `controlMinX`, so every item to the spacer's left overflows.
     ///

@@ -272,6 +272,14 @@ final class MenuBarItemImageCache: ObservableObject {
                 uniquingKeysWith: { current, _ in current }
             )
             let liveItems = capturable.compactMap { refreshedByTag[$0.tag] }
+            if MacOS27GlyphDebug.isEnabled {
+                for item in capturable {
+                    let live = refreshedByTag[item.tag]
+                    MacOS27GlyphDebug.log(
+                        "Live \(item.tag): drawn=\(live?.isOnScreen.description ?? "missing") bounds=\(live?.bounds.debugDescription ?? "none")"
+                    )
+                }
+            }
             if let capture = await ScreenCapture.captureMenuBarDisplayStrip(displayID: displayID),
                isPlausibleMacOS27Capture(capture) {
                 MacOS27GlyphDebug.write(capture.image, name: "strip")
@@ -468,6 +476,12 @@ final class MenuBarItemImageCache: ObservableObject {
             }
         }
 
+        // Save before the checks below: a capture that arrives after Layout
+        // closes still holds real glyphs, and they may be the only chance to
+        // photograph an item that macOS usually keeps out of the menu bar.
+        if #available(macOS 27.0, *) {
+            saveMacOS27Images(newImages)
+        }
         guard !Task.isCancelled, appState.itemManager.itemCache.displayID == displayID else { return }
         if #available(macOS 27.0, *) {
             guard controller.isLayoutEditing, !controller.isReorderInProgress,
@@ -486,6 +500,23 @@ final class MenuBarItemImageCache: ObservableObject {
         // cannot produce a redraw pulse.
         if updatedImages != images {
             images = updatedImages
+        }
+    }
+
+    /// Saves new macOS 27 captures, so the Ice Bar can show them after the
+    /// items are concealed, including after Ice relaunches.
+    @available(macOS 27.0, *)
+    @MainActor
+    private func saveMacOS27Images(_ newImages: [MenuBarItemTag: CapturedImage]) {
+        guard let appState, !newImages.isEmpty else {
+            return
+        }
+        let items = appState.itemManager.itemCache.managedItems
+        for item in items {
+            guard let image = newImages[item.tag], MacOS27SavedItemImages.allowsPhoto(item) else {
+                continue
+            }
+            MacOS27SavedItemImages.save(image, forKey: MacOS27SavedItemImages.key(for: item, among: items))
         }
     }
 
@@ -520,6 +551,7 @@ final class MenuBarItemImageCache: ObservableObject {
         if updatedImages != images {
             images = updatedImages
         }
+        saveMacOS27Images(result.images)
     }
 
     /// Updates the cache for the given sections, if necessary.

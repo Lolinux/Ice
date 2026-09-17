@@ -55,6 +55,10 @@ final class MenuBarManager: ObservableObject {
     private let nativeHiding = MacOS27NativeMenuBarHiding()
     private var nativeConcealmentTask: Task<Void, Never>?
     private var nativeConcealmentCheckTask: Task<Void, Never>?
+
+    /// The one-per-launch pass that photographs concealed items.
+    private var glyphPhotoPassTask: Task<Void, Never>?
+    private var hasRunGlyphPhotoPass = false
     private var lastNativeVisibilityDecision: String?
     /// The time of the last change to which items the spacers conceal.
     private var lastNativeConcealmentChange: ContinuousClock.Instant?
@@ -228,6 +232,7 @@ final class MenuBarManager: ObservableObject {
                 macOS27Controller.isConcealingItems = true
                 logNativeVisibilityDecision("hidden: \(nativeHiding.debugDescription(for: .hidden))")
                 scheduleNativeConcealmentCheck(screen: screen)
+                scheduleGlyphPhotoPass(screen: screen)
             }
             return
         }
@@ -249,6 +254,102 @@ final class MenuBarManager: ObservableObject {
         if macOS27Controller.isConcealingItems, !wasConcealing {
             scheduleNativeConcealmentCheck(screen: screen)
         }
+    }
+
+    /// Photographs concealed items that have no picture yet.
+    ///
+    /// A crowded menu bar leaves macOS no room to draw the hidden items even
+    /// when Ice reveals them, so they can never be photographed all at once.
+    /// The spacer is given back a little at a time instead: macOS draws the
+    /// next few items, they're photographed and saved to disk, and the spacer
+    /// is restored. It runs once per launch, and only for items whose picture
+    /// is missing.
+    @available(macOS 27.0, *)
+    private func scheduleGlyphPhotoPass(screen: NSScreen) {
+        guard !hasRunGlyphPhotoPass, appState?.settings.general.useIceBar == true else {
+            return
+        }
+        hasRunGlyphPhotoPass = true
+        glyphPhotoPassTask?.cancel()
+        glyphPhotoPassTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            await self?.runGlyphPhotoPass(screen: screen)
+        }
+    }
+
+    @available(macOS 27.0, *)
+    private func runGlyphPhotoPass(screen: NSScreen) async {
+        guard
+            let appState,
+            ScreenCapture.cachedCheckPermissions(),
+            !appState.navigationState.isIceBarPresented,
+            !appState.navigationState.isSettingsPresented,
+            nativeHiding.isConcealing(.hidden),
+            let fullLength = nativeHiding.spacerLength(for: .hidden)
+        else {
+            return
+        }
+        let controlPosition = controlItem(withName: .visible)?.preferredPosition ?? 0
+
+        func itemsNeedingPictures() -> [MenuBarItem] {
+            let items = appState.itemManager.itemCache.managedItems
+            return appState.itemManager.itemCache.managedItems(for: .hidden).filter { item in
+                guard MacOS27SavedItemImages.allowsPhoto(item) else { return false }
+                guard appState.imageCache.images[item.tag] == nil else { return false }
+                let key = MacOS27SavedItemImages.key(for: item, among: items)
+                return MacOS27SavedItemImages.image(forKey: key) == nil
+            }
+        }
+
+        guard !itemsNeedingPictures().isEmpty else {
+            return
+        }
+        logger.notice("Photographing \(itemsNeedingPictures().count, privacy: .public) concealed items")
+
+        var length = fullLength
+        let step: CGFloat = 60
+        var stepsWithoutProgress = 0
+        var remainingBefore = itemsNeedingPictures().count
+        while length > 1, !Task.isCancelled {
+            // The last step gives back the spacer's own width too: macOS keeps
+            // the whole group in its overflow unless every item fits.
+            length = max(1, length - step)
+            nativeHiding.setConcealingLength(length, section: .hidden, anchorPosition: controlPosition)
+            do { try await Task.sleep(for: .milliseconds(650)) } catch { break }
+            if MacOS27GlyphDebug.isEnabled, length <= 180 {
+                MacOS27MenuBarItemProvider.dumpMenuBarAgentTree()
+            }
+            if MacOS27GlyphDebug.isEnabled {
+                let own = MacOS27MenuBarItemProvider.ownMenuBarItems()
+                    .map { "\($0.tag.title)=\($0.bounds.debugDescription)" }
+                    .joined(separator: " ")
+                MacOS27GlyphDebug.log("Pass step: spacer=\(length) own: \(own) overflow: \(MacOS27MenuBarItemProvider.overflowControlFrames)")
+            }
+            await appState.imageCache.captureMacOS27Images(for: .hidden, onlyIfMissing: true)
+            let remaining = itemsNeedingPictures().count
+            if remaining == 0 || appState.navigationState.isIceBarPresented {
+                break
+            }
+            // A full menu bar leaves macOS no room no matter how much space
+            // the spacer gives back. Stop shuffling the bar for nothing.
+            stepsWithoutProgress = remaining < remainingBefore ? 0 : stepsWithoutProgress + 1
+            remainingBefore = remaining
+            if stepsWithoutProgress >= 3, length <= 120 {
+                logger.notice("Stopping the photo pass: macOS is not drawing the concealed items")
+                break
+            }
+        }
+
+        let remaining = itemsNeedingPictures().count
+        logger.notice("Photo pass finished with \(remaining, privacy: .public) items still missing a picture")
+        nativeHiding.setHidden(
+            true,
+            section: .hidden,
+            anchorPosition: controlPosition,
+            screen: screen,
+            controlFrame: currentIceButtonFrame()
+        )
+        lastNativeConcealmentChange = .now
     }
 
     /// Confirms that Ice's own button is still on the bar after a spacer was
