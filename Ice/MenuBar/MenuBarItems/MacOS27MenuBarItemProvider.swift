@@ -26,6 +26,17 @@ enum MacOS27MenuBarItemProvider {
     // Accessed only inside main-thread AX batches, including targeted rereads.
     private static var runtimeIdentities = MacOS27RuntimeItemRegistry<AXUIElement>()
 
+    private static let overflowControlLock = NSLock()
+    private static var lastOverflowControlFrames = [CGRect]()
+
+    /// The frames of MenuBarAgent's overflow button (the « button), from the
+    /// most recent read that included MenuBarAgent.
+    static var overflowControlFrames: [CGRect] {
+        overflowControlLock.lock()
+        defer { overflowControlLock.unlock() }
+        return lastOverflowControlFrames
+    }
+
     /// A single main-thread batch for our own controls only. Do not take the
     /// background scan lock here: its owner may be waiting for the main thread.
     @MainActor
@@ -331,8 +342,35 @@ enum MacOS27MenuBarItemProvider {
             return title
         })
 
+        // Items in MenuBarAgent's overflow aren't drawn in the menu bar. They
+        // report stale frames stacked on the overflow button, so a frame that
+        // overlaps the button or another item doesn't describe a drawn item.
+        let overflowControls = rawItems.filter(isNativeOverflowControl)
+        let overflowFrames: [CGRect]
+        if rawItems.contains(where: { $0.namespace == .controlCenter }) {
+            overflowFrames = overflowControls.map(\.bounds)
+            overflowControlLock.lock()
+            lastOverflowControlFrames = overflowFrames
+            overflowControlLock.unlock()
+        } else {
+            overflowFrames = overflowControlFrames
+        }
+        let contentItems = rawItems.filter { !isNativeOverflowControl($0) }
+        func isDrawn(_ rawItem: RawItem) -> Bool {
+            if overflowFrames.contains(where: { $0.intersects(rawItem.bounds) }) {
+                return false
+            }
+            // Hosted hit areas of adjacent items can overlap by a few points.
+            return !contentItems.contains { other in
+                guard other.identityTitle != rawItem.identityTitle || other.namespace != rawItem.namespace else {
+                    return false
+                }
+                return rawItem.bounds.intersection(other.bounds).width > 6
+            }
+        }
+
         return sorted.compactMap { rawItem in
-            guard !isNativeOverflowPlaceholder(rawItem.identityTitle) else {
+            guard !isNativeOverflowControl(rawItem) else {
                 return nil
             }
             if rawItem.identityTitle.hasPrefix(MacOS27RuntimeItemIdentity.prefix) {
@@ -370,7 +408,7 @@ enum MacOS27MenuBarItemProvider {
                 title: rawItem.displayTitle,
                 accessibilityHelp: rawItem.accessibilityHelp,
                 accessibilityValue: rawItem.accessibilityValue,
-                isOnScreen: true
+                isOnScreen: isDrawn(rawItem)
             )
         }
     }
@@ -399,8 +437,14 @@ enum MacOS27MenuBarItemProvider {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private static func isNativeOverflowPlaceholder(_ title: String) -> Bool {
-        let normalized = title.lowercased()
+    /// Returns whether a raw item is MenuBarAgent's overflow button. It has no
+    /// `com.apple.menuextra` identifier, only a localized description such as
+    /// "Show Hidden Menu Bar Items".
+    private static func isNativeOverflowControl(_ rawItem: RawItem) -> Bool {
+        if rawItem.namespace == .controlCenter, !rawItem.identityTitle.hasPrefix("com.apple.") {
+            return true
+        }
+        let normalized = rawItem.identityTitle.lowercased()
         return normalized.contains("overflow") || normalized.contains("chevron")
     }
 

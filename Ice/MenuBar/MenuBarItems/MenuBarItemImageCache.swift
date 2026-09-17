@@ -333,7 +333,10 @@ final class MenuBarItemImageCache: ObservableObject {
 
         for item in items {
             let bounds = item.bounds
+            // An item in MenuBarAgent's overflow isn't drawn; its frame would
+            // crop the overflow button or another item.
             guard
+                item.isOnScreen,
                 !bounds.isNull,
                 !bounds.isEmpty,
                 bounds.width >= 8,

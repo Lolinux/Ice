@@ -1350,20 +1350,34 @@ extension MenuBarItemManager {
             menuBarManager.endIceBarReveal()
         }
 
-        guard let revealedItem = await waitForRevealedItem(item) else {
+        let clickPoint: CGPoint
+        var ownerPIDs: Set<pid_t>
+        if let revealedItem = await waitForRevealedItem(item) {
+            clickPoint = revealedItem.bounds.center
+            ownerPIDs = Set([revealedItem.ownerPID, revealedItem.sourcePID].compactMap { $0 })
+        } else if let overflowFrame = MacOS27MenuBarItemProvider.overflowControlFrames.first {
+            // The menu bar has no room for the item even with the hidden items
+            // revealed, so macOS keeps it in its own overflow. Open that
+            // instead, where the item can be clicked.
+            logger.notice("\(item.logString, privacy: .public) is in the system overflow; opening it instead")
+            clickPoint = overflowFrame.center
+            ownerPIDs = Set(
+                NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.MenuBarAgent")
+                    .map(\.processIdentifier)
+            )
+        } else {
             logger.error("\(item.logString, privacy: .public) didn't appear in the menu bar after revealing hidden items")
             return
         }
 
-        let ownerPIDs = Set([revealedItem.ownerPID, revealedItem.sourcePID].compactMap { $0 })
         let windowsBeforeClick = Self.onScreenWindowIDs(ownedBy: ownerPIDs)
         do {
-            try await postMacOS27Click(at: revealedItem.bounds.center, with: mouseButton)
+            try await postMacOS27Click(at: clickPoint, with: mouseButton)
         } catch {
             logger.error("Clicking \(item.logString, privacy: .public) failed: \(error, privacy: .public)")
             return
         }
-        logger.notice("Clicked \(item.logString, privacy: .public) at \(revealedItem.bounds.debugDescription, privacy: .public)")
+        logger.notice("Clicked \(item.logString, privacy: .public) at \(clickPoint.debugDescription, privacy: .public)")
 
         // The items are visible now, so refresh the Ice Bar's images.
         Task {
@@ -1403,6 +1417,7 @@ extension MenuBarItemManager {
             }.value
             guard
                 let current = items.first(matching: item.tag),
+                current.isOnScreen,
                 NSScreen.screens.contains(where: {
                     let display = CGDisplayBounds($0.displayID)
                     let strip = CGRect(x: display.minX, y: display.minY, width: display.width, height: 40)
