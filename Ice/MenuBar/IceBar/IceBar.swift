@@ -186,15 +186,21 @@ final class IceBarPanel: NSPanel {
         appState.navigationState.isIceBarPresented = true
         currentSection = section
 
-        let cacheTask = Task(timeout: .seconds(1)) {
-            await appState.itemManager.cacheItemsIfNeeded()
-            await appState.imageCache.updateCache()
-        }
+        // On macOS 27, refreshing walks every running app's accessibility tree
+        // and routinely hits the timeout, while concealed items can't be read or
+        // captured anyway. Show the cached items at once; the periodic refresh
+        // keeps them current.
+        if #unavailable(macOS 27.0) {
+            let cacheTask = Task(timeout: .seconds(1)) {
+                await appState.itemManager.cacheItemsIfNeeded()
+                await appState.imageCache.updateCache()
+            }
 
-        do {
-            try await cacheTask.value
-        } catch {
-            Logger.default.error("Cache update failed when showing IceBarPanel - \(error)")
+            do {
+                try await cacheTask.value
+            } catch {
+                Logger.default.error("Cache update failed when showing IceBarPanel - \(error)")
+            }
         }
 
         contentView = IceBarHostingView(
