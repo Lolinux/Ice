@@ -95,7 +95,9 @@ extension EdgeInsets {
     static let iceFormDefaultPadding: EdgeInsets = {
         var insets = EdgeInsets(all: 20)
         if #available(macOS 26.0, *) {
-            insets.top = 0
+            // The window's own header already provides space above the form,
+            // but none at all leaves the first row against it.
+            insets.top = 12
         }
         return insets
     }()

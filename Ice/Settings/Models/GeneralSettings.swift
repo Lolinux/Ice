@@ -40,6 +40,9 @@ final class GeneralSettings: ObservableObject {
     /// How dark the Ice Bar's Liquid Glass background is, on macOS 26 and later.
     @Published var iceBarGlassDarkness: Double = 0.6
 
+    /// Extra space between the items in the Ice Bar, in points.
+    @Published var iceBarItemSpacing: Double = 0
+
     /// How see-through the Ice Bar's background is, on macOS 26 and later.
     /// At 1 it is bare Liquid Glass; at 0 it is a solid bar in the shade that
     /// ``iceBarGlassDarkness`` chooses.
@@ -103,6 +106,7 @@ final class GeneralSettings: ObservableObject {
         Defaults.ifPresent(key: .showOnScroll, assign: &showOnScroll)
         Defaults.ifPresent(key: .itemSpacingOffset, assign: &itemSpacingOffset)
         Defaults.ifPresent(key: .iceBarBackgroundOpacity, assign: &iceBarBackgroundOpacity)
+        Defaults.ifPresent(key: .iceBarItemSpacing, assign: &iceBarItemSpacing)
         Defaults.ifPresent(key: .iceBarGlassDarkness, assign: &iceBarGlassDarkness)
         Defaults.ifPresent(key: .iceBarBackgroundTransparency, assign: &iceBarBackgroundTransparency)
         Defaults.ifPresent(key: .autoRehide, assign: &autoRehide)
@@ -189,6 +193,13 @@ final class GeneralSettings: ObservableObject {
             .store(in: &c)
 
         // Saving on every intermediate value of a drag is wasted work.
+        $iceBarItemSpacing
+            .throttle(for: 0.2, scheduler: DispatchQueue.main, latest: true)
+            .sink { spacing in
+                Defaults.set(spacing, forKey: .iceBarItemSpacing)
+            }
+            .store(in: &c)
+
         $iceBarGlassDarkness
             .throttle(for: 0.2, scheduler: DispatchQueue.main, latest: true)
             .sink { darkness in

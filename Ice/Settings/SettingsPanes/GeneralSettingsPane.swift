@@ -179,6 +179,7 @@ struct GeneralSettingsPane: View {
         useIceBar
         if settings.useIceBar {
             iceBarLocationPicker
+            iceBarItemSpacingSlider
             if #available(macOS 26.0, *) {
                 iceBarGlassDarknessSlider
                 iceBarBackgroundTransparencySlider
@@ -210,6 +211,21 @@ struct GeneralSettingsPane: View {
     }
 
     @ViewBuilder
+    private var iceBarItemSpacingSlider: some View {
+        LabeledContent {
+            endLabeledSlider(
+                value: $settings.iceBarItemSpacing,
+                in: 0...24,
+                minimumSymbol: "arrow.right.and.line.vertical.and.arrow.left",
+                maximumSymbol: "arrow.left.and.line.vertical.and.arrow.right"
+            )
+        } label: {
+            Text("Icon spacing")
+        }
+        .annotation("How much space sits between the icons in the Ice Bar.")
+    }
+
+    @ViewBuilder
     private var iceBarGlassDarknessSlider: some View {
         LabeledContent {
             endLabeledSlider(
@@ -228,11 +244,13 @@ struct GeneralSettingsPane: View {
     @ViewBuilder
     private func endLabeledSlider(
         value: Binding<Double>,
+        in bounds: ClosedRange<Double> = 0...1,
         minimumSymbol: String,
         maximumSymbol: String
     ) -> some View {
         EndLabeledSlider(
             value: value,
+            bounds: bounds,
             minimumSymbol: minimumSymbol,
             maximumSymbol: maximumSymbol
         )
@@ -413,6 +431,7 @@ struct GeneralSettingsPane: View {
 private struct EndLabeledSlider: View {
     @Binding var value: Double
 
+    let bounds: ClosedRange<Double>
     let minimumSymbol: String
     let maximumSymbol: String
 
@@ -433,7 +452,7 @@ private struct EndLabeledSlider: View {
     var body: some View {
         Slider(
             value: sliderValue,
-            in: 0...1,
+            in: bounds,
             onEditingChanged: { isEditing in
                 guard !isEditing else {
                     return

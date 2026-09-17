@@ -482,7 +482,7 @@ private struct IceBarContentView: View {
                 .padding(.horizontal, 10)
         } else {
             ScrollView(.horizontal) {
-                HStack(spacing: 0) {
+                HStack(spacing: appState.settings.general.iceBarItemSpacing) {
                     ForEach(items, id: \.windowID) { item in
                         IceBarItemView(
                             imageCache: imageCache,
