@@ -23,7 +23,12 @@ struct MenuBarItemTag: Hashable, CustomStringConvertible {
     /// A Boolean value that indicates whether the item identified
     /// by this tag can be moved.
     var isMovable: Bool {
-        !MenuBarItemTag.immovableItems.contains(self)
+        // Synthetic Command-drags of MenuBarAgent-hosted system items have
+        // crashed MenuBarAgent on macOS 27. Users can still drag them natively.
+        if #available(macOS 27.0, *), namespace == .controlCenter {
+            return false
+        }
+        return !MenuBarItemTag.immovableItems.contains(self)
     }
 
     /// A Boolean value that indicates whether the item identified

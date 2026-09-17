@@ -391,7 +391,11 @@ extension MenuBarItemManager {
     /// is the sole divider: repair only our own blank item if the user dropped
     /// between the pair, then read membership from the expanded physical order.
     @available(macOS 27.0, *)
-    func alignNativeHidingBoundary(updatingCache: Bool, displayID: CGDirectDisplayID? = nil) async -> Bool {
+    func alignNativeHidingBoundary(
+        updatingCache: Bool,
+        displayID: CGDirectDisplayID? = nil,
+        allowingDrag: Bool = true
+    ) async -> Bool {
         guard let appState else { return false }
         let controller = appState.menuBarManager.macOS27Controller
         // An ordinary click does not need a fixed settling delay or an AX
@@ -431,6 +435,11 @@ extension MenuBarItemManager {
         let order = snapshot.sorted { $0.bounds.minX < $1.bounds.minX }.map(\.tag)
         logger.notice("Preparing native boundary \(boundary.bounds.debugDescription, privacy: .public) beside Ice \(ice.bounds.debugDescription, privacy: .public)")
         if !MacOS27NativeBoundary.isImmediatelyBefore(boundary.tag, ice.tag, in: order) {
+            // Never take over the pointer without an explicit user action.
+            guard allowingDrag else {
+                logger.notice("Not dragging Ice's boundary without a user action")
+                return false
+            }
             guard await performMacOS27NativeMove(
                 item: boundary,
                 destination: destination,
@@ -771,6 +780,41 @@ extension MenuBarItemManager {
             source.setLocalEventsFilterDuringSuppressionState(.permitAllEvents, state: state)
         }
         source.localEventsSuppressionInterval = 0
+    }
+
+    /// Suppresses local keyboard and mouse events for a short interval
+    /// after each event posted from the given source.
+    private nonisolated func suppressLocalEvents(for source: CGEventSource) {
+        let states: [CGEventSuppressionState] = [
+            .eventSuppressionStateRemoteMouseDrag,
+            .eventSuppressionStateSuppressionInterval,
+        ]
+        for state in states {
+            source.setLocalEventsFilterDuringSuppressionState(.permitSystemDefinedEvents, state: state)
+        }
+        source.localEventsSuppressionInterval = 0.25
+    }
+
+    /// Waits for the user to stop typing, pointing, and holding modifiers
+    /// or buttons before a native Command-drag, giving up after a timeout.
+    @available(macOS 27.0, *)
+    private nonisolated func waitForUserToPauseInputForNativeDrag() async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while true {
+            try Task.checkCancellation()
+            let secondsSinceKeyDown = CGEventSource.secondsSinceLastEventType(
+                .combinedSessionState,
+                eventType: .keyDown
+            )
+            if hasUserPausedInput(for: .milliseconds(250)), secondsSinceKeyDown >= 0.5 {
+                return
+            }
+            guard ContinuousClock.now < deadline else {
+                logger.notice("Skipping native drag because the user did not pause input")
+                throw EventError.cannotComplete
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
     }
 
     /// Posts an event to the given menu bar item and waits until
@@ -1281,6 +1325,7 @@ extension MenuBarItemManager {
         destination: MoveDestination
     ) async throws {
         try Task.checkCancellation()
+        try await waitForUserToPauseInputForNativeDrag()
         let itemBounds = item.bounds
         let targetBounds = destination.targetItem.bounds
         let start = itemBounds.center
@@ -1294,7 +1339,6 @@ extension MenuBarItemManager {
         )
         let originalMouseLocation = try getMouseLocation()
         let source = try getEventSource(with: .combinedSessionState)
-        try permitLocalEvents()
 
         guard
             let commandDown = CGEvent(
@@ -1330,6 +1374,10 @@ extension MenuBarItemManager {
         }
 
         let mouseUp = try event(.leftMouseUp, at: end)
+        // Suppress the user's own keyboard and mouse input while the synthetic
+        // Command key is down, so a keystroke can't become a Command shortcut
+        // and pointer movement can't derail the drag.
+        suppressLocalEvents(for: source)
         MouseHelpers.hideCursor()
         defer {
             if mouseIsDown { mouseUp.post(tap: .cghidEventTap) }
@@ -1338,6 +1386,7 @@ extension MenuBarItemManager {
             }
             MouseHelpers.warpCursor(to: originalMouseLocation)
             MouseHelpers.showCursor()
+            try? permitLocalEvents()
         }
 
         MouseHelpers.warpCursor(to: start)

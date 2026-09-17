@@ -242,16 +242,10 @@ extension HIDEventManager {
         }
 
         let initialSpaceID = Bridging.getActiveSpaceID()
-        let rehideInterval = appState.settings.general.rehideInterval
 
         Task {
-            // Smart mode still respects the user's configured rehide delay.
-            // The previous fixed 250 ms delay looked like a post-click twitch.
-            do {
-                try await Task.sleep(for: .seconds(rehideInterval))
-            } catch {
-                return
-            }
+            // Give the window under the mouse a chance to focus.
+            try await Task.sleep(for: .milliseconds(250))
 
             // Don't bother checking the window if the click caused
             // a space change.

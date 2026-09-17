@@ -56,6 +56,9 @@ final class MenuBarManager: ObservableObject {
     private var nativeConcealmentTask: Task<Void, Never>?
     private var nativeVisibilityGeneration: UInt64 = 0
     private var nativeDragVisibility = MacOS27NativeDragVisibilityState()
+    /// The time of the user's most recent explicit section toggle. Ice only
+    /// sends a native drag to align its boundary shortly after one.
+    private var lastUserToggleTimestamp: ContinuousClock.Instant?
 
     /// The managed sections in the menu bar.
     let sections = [
@@ -128,12 +131,17 @@ final class MenuBarManager: ObservableObject {
             guard nativeConcealmentTask == nil else { return }
             nativeHiding.prepareForHiding(anchorPosition: controlPosition)
             let generation = nativeVisibilityGeneration
+            let isUserInitiated = lastUserToggleTimestamp.map { $0.duration(to: .now) < .seconds(3) } ?? false
             nativeConcealmentTask = Task { [weak self] in
                 guard let self else { return }
                 // No mouse monitor: only an explicit request to hide reaches
                 // this check. Moving our blank boundary leaves every other
                 // app's native input and the user's new order untouched.
-                let aligned = await appState.itemManager.alignNativeHidingBoundary(updatingCache: true, displayID: screen.displayID)
+                let aligned = await appState.itemManager.alignNativeHidingBoundary(
+                    updatingCache: true,
+                    displayID: screen.displayID,
+                    allowingDrag: isUserInitiated
+                )
                 guard !Task.isCancelled, generation == nativeVisibilityGeneration else { return }
                 nativeConcealmentTask = nil
                 guard aligned else {
@@ -182,7 +190,9 @@ final class MenuBarManager: ObservableObject {
 
     /// A click after Layout toggles the actual, currently expanded bar.
     func prepareForControlToggle() {
-        guard #available(macOS 27.0, *), macOS27Controller.isLayoutEditing else { return }
+        guard #available(macOS 27.0, *) else { return }
+        lastUserToggleTimestamp = .now
+        guard macOS27Controller.isLayoutEditing else { return }
         for section in sections { section.controlItem.state = .showSection }
         macOS27Controller.endLayoutEditing()
     }
