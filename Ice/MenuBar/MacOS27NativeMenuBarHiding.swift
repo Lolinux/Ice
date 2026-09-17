@@ -4,6 +4,7 @@
 //
 
 import Cocoa
+import OSLog
 
 /// Hides a contiguous section by resizing an Ice-owned blank status item.
 /// macOS lays out and handles every other item, including overflow and clicks.
@@ -12,6 +13,8 @@ final class MacOS27NativeMenuBarHiding {
     private struct Spacer {
         let item: NSStatusItem
     }
+
+    private let logger = Logger(category: "MacOS27NativeMenuBarHiding")
 
     private var spacers = [MenuBarSection.Name: Spacer]()
 
@@ -87,12 +90,18 @@ final class MacOS27NativeMenuBarHiding {
         if item.button?.isEnabled == true { item.button?.isEnabled = false }
     }
 
+    /// Sets whether a section's spacer conceals the items to its left.
+    ///
+    /// - Parameter controlFrame: The current frame of the item immediately to
+    ///   the right of the spacer, in global display coordinates. When known,
+    ///   the spacer is sized to the space actually available to its left.
     @available(macOS 27.0, *)
     func setHidden(
         _ hidden: Bool,
         section: MenuBarSection.Name,
         anchorPosition: CGFloat,
-        screen: NSScreen
+        screen: NSScreen,
+        controlFrame: CGRect? = nil
     ) {
         guard hidden else {
             guard let spacer = spacers[section] else { return }
@@ -100,18 +109,73 @@ final class MacOS27NativeMenuBarHiding {
             return
         }
 
-        // An item wider than the entire native status region is discarded on
-        // macOS 27. A width within that region makes its left neighbors overflow.
-        let regionWidth = screen.auxiliaryTopRightArea?.width
-            ?? (screen.frame.width - (screen.getApplicationMenuFrame()?.width ?? 300))
-        let length = max(32, regionWidth - 32)
-
         prepare(section: section, anchorPosition: anchorPosition)
         guard let spacer = spacers[section] else { return }
 
+        let length: CGFloat
+        if let controlFrame {
+            length = Self.concealingLength(
+                controlMinX: controlFrame.minX,
+                screen: screen,
+                applicationMenuMaxX: screen.getApplicationMenuFrame()?.maxX
+            )
+        } else if spacer.item.isVisible, spacer.item.length > 1 {
+            // Without a fresh frame, keep the length that is already concealing.
+            length = spacer.item.length
+        } else {
+            // An item wider than the entire native status region is discarded on
+            // macOS 27. A width within that region makes its left neighbors overflow.
+            let regionWidth = screen.auxiliaryTopRightArea?.width
+                ?? (screen.frame.width - (screen.getApplicationMenuFrame()?.width ?? 300))
+            length = max(32, regionWidth - 32)
+        }
+
         if spacer.item.button?.isEnabled == true { spacer.item.button?.isEnabled = false }
-        if spacer.item.length != length { spacer.item.length = length }
+        if spacer.item.length != length {
+            logger.notice("Sizing \(section.rawValue, privacy: .public) spacer to \(length) (control frame: \(controlFrame?.debugDescription ?? "unknown", privacy: .public))")
+            spacer.item.length = length
+        }
         if !spacer.item.isVisible { spacer.item.isVisible = true }
+    }
+
+    /// Returns a spacer length that fills the space available to the left of
+    /// the item at `controlMinX`, so every item to the spacer's left overflows.
+    ///
+    /// On macOS 27, a status item that doesn't fit is discarded, and items
+    /// that don't fit right of the notch move to its left. A spacer beside an
+    /// item right of the notch must therefore be wider than the remaining gap
+    /// there, so that it moves left of the notch and fills that side instead.
+    static func concealingLength(
+        controlMinX: CGFloat,
+        screen: NSScreen,
+        applicationMenuMaxX: CGFloat?
+    ) -> CGFloat {
+        // Leave room for the native overflow indicator.
+        let margin: CGFloat = 32
+        let minimumLength: CGFloat = 32
+        let menusMaxX = max(screen.frame.minX, applicationMenuMaxX ?? screen.frame.minX)
+
+        guard
+            let leftArea = screen.auxiliaryTopLeftArea,
+            let rightArea = screen.auxiliaryTopRightArea
+        else {
+            return max(minimumLength, controlMinX - menusMaxX - margin)
+        }
+
+        let notchMinX = leftArea.maxX
+        let notchMaxX = rightArea.minX
+        guard controlMinX >= notchMaxX else {
+            return max(minimumLength, min(controlMinX, notchMinX) - menusMaxX - margin)
+        }
+
+        let rightGap = controlMinX - notchMaxX
+        let leftSegment = notchMinX - menusMaxX - margin
+        if leftSegment > rightGap {
+            return leftSegment
+        }
+        // The left side is too small to hold a spacer wider than the right
+        // gap. Fill the right gap; items can still show left of the notch.
+        return max(minimumLength, rightGap - margin)
     }
 
     func removeAll() {

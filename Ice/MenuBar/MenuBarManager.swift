@@ -172,7 +172,13 @@ final class MenuBarManager: ObservableObject {
                     return
                 }
                 nativeHiding.setHidden(false, section: .alwaysHidden, anchorPosition: alwaysAnchor, screen: screen)
-                nativeHiding.setHidden(true, section: .hidden, anchorPosition: controlPosition, screen: screen)
+                nativeHiding.setHidden(
+                    true,
+                    section: .hidden,
+                    anchorPosition: controlPosition,
+                    screen: screen,
+                    controlFrame: currentIceButtonFrame()
+                )
                 macOS27Controller.isConcealingItems = true
                 logNativeVisibilityDecision("hidden: \(nativeHiding.debugDescription(for: .hidden))")
                 scheduleNativeConcealmentCheck(screen: screen)
@@ -183,7 +189,13 @@ final class MenuBarManager: ObservableObject {
         if !hideHidden { cancelNativeConcealment() }
         let wasConcealing = nativeHiding.isConcealing(.hidden) || nativeHiding.isConcealing(.alwaysHidden)
         nativeHiding.setHidden(hideAlwaysHidden, section: .alwaysHidden, anchorPosition: alwaysAnchor, screen: screen)
-        nativeHiding.setHidden(hideHidden, section: .hidden, anchorPosition: controlPosition, screen: screen)
+        nativeHiding.setHidden(
+            hideHidden,
+            section: .hidden,
+            anchorPosition: controlPosition,
+            screen: screen,
+            controlFrame: hideHidden ? currentIceButtonFrame() : nil
+        )
         macOS27Controller.isConcealingItems = hideHidden || hideAlwaysHidden
         logNativeVisibilityDecision(
             "applied: hidden=\(hideHidden), alwaysHidden=\(hideAlwaysHidden), " +
@@ -238,6 +250,13 @@ final class MenuBarManager: ObservableObject {
             }
         }
         return true
+    }
+
+    /// Returns the current frame of Ice's visible control item, read through
+    /// Accessibility from Ice's own process.
+    @available(macOS 27.0, *)
+    private func currentIceButtonFrame() -> CGRect? {
+        MacOS27MenuBarItemProvider.ownMenuBarItems().first(matching: .visibleControlItem)?.bounds
     }
 
     /// Logs a macOS 27 visibility decision when it differs from the last one,

@@ -790,15 +790,19 @@ extension MenuBarItemManager {
         source.localEventsSuppressionInterval = 0
     }
 
-    /// Suppresses local keyboard and mouse events for a short interval
-    /// after each event posted from the given source.
-    private nonisolated func suppressLocalEvents(for source: CGEventSource) {
+    /// Suppresses local keyboard events for a short interval after each
+    /// event posted from the given source. Local mouse events stay permitted,
+    /// matching the input state that native drags were validated with.
+    private nonisolated func suppressLocalKeyboardEvents(for source: CGEventSource) {
         let states: [CGEventSuppressionState] = [
             .eventSuppressionStateRemoteMouseDrag,
             .eventSuppressionStateSuppressionInterval,
         ]
         for state in states {
-            source.setLocalEventsFilterDuringSuppressionState(.permitSystemDefinedEvents, state: state)
+            source.setLocalEventsFilterDuringSuppressionState(
+                [.permitLocalMouseEvents, .permitSystemDefinedEvents],
+                state: state
+            )
         }
         source.localEventsSuppressionInterval = 0.25
     }
@@ -1387,10 +1391,9 @@ extension MenuBarItemManager {
         }
 
         let mouseUp = try event(.leftMouseUp, at: end)
-        // Suppress the user's own keyboard and mouse input while the synthetic
-        // Command key is down, so a keystroke can't become a Command shortcut
-        // and pointer movement can't derail the drag.
-        suppressLocalEvents(for: source)
+        // Suppress the user's own keyboard input while the synthetic Command
+        // key is down, so a keystroke can't become a Command shortcut.
+        suppressLocalKeyboardEvents(for: source)
         MouseHelpers.hideCursor()
         defer {
             if mouseIsDown { mouseUp.post(tap: .cghidEventTap) }
@@ -1536,6 +1539,9 @@ extension MenuBarItemManager {
                     verifiedSamples = 0
                 }
             }
+            let finalBounds = snapshot.first(matching: item.tag)?.bounds.debugDescription ?? "missing"
+            let finalTargetBounds = snapshot.first(matching: destination.targetItem.tag)?.bounds.debugDescription ?? "missing"
+            logger.warning("Native drag from \(liveItem.bounds.debugDescription, privacy: .public) toward \(liveTarget.bounds.debugDescription, privacy: .public) left the item at \(finalBounds, privacy: .public) with target at \(finalTargetBounds, privacy: .public)")
         }
         return false
     }
