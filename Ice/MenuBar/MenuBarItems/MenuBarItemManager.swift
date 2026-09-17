@@ -1474,28 +1474,39 @@ extension MenuBarItemManager {
                 let hitElement = AXHelpers.element(at: center)
                 let hitIdentifier = hitElement.flatMap { AXHelpers.identifier(for: $0) }
                 if hitIdentifier != liveItem.tag.title {
+                    let hitFrame = hitElement.flatMap { AXHelpers.frame(for: $0) }
                     let hitDescription = hitElement.map { element in
                         let role = AXHelpers.role(for: element).map { "\($0)" } ?? "?"
                         let pid = (try? element.pid()).map { "\($0)" } ?? "?"
-                        return "\(hitIdentifier ?? "no identifier") role=\(role) pid=\(pid)"
+                        let frame = hitFrame?.debugDescription ?? "?"
+                        return "\(hitIdentifier ?? "no identifier") role=\(role) pid=\(pid) frame=\(frame)"
                     } ?? "none"
-                    // On some macOS 27 builds, system-wide hit testing can't see
-                    // the narrow hosted boundary at all. Only then, fall back to
-                    // geometry: Ice's own fresh frame must still contain the drag
-                    // start, and no other item's frame may contain it.
+                    // On macOS 27, system-wide hit testing returns MenuBarAgent's
+                    // unidentified host element for a status item, or nothing at
+                    // all. Fall back to geometry: the hit element, if any, must
+                    // have exactly the boundary's frame, Ice's own fresh frame must
+                    // still match, and no other item's frame may contain the start.
+                    let hitFrameMatches = hitFrame.map { frame in
+                        abs(frame.minX - liveItem.bounds.minX) <= 1 &&
+                            abs(frame.maxX - liveItem.bounds.maxX) <= 1 &&
+                            abs(frame.midY - liveItem.bounds.midY) <= 1
+                    }
                     let ownBoundary = MacOS27MenuBarItemProvider.ownMenuBarItems().first(matching: liveItem.tag)
                     let overlappingItems = snapshot.filter {
                         $0.tag != liveItem.tag && $0.bounds.insetBy(dx: -1, dy: 0).contains(center)
                     }
                     guard
                         hitIdentifier == nil,
+                        hitFrameMatches ?? true,
                         ownBoundary?.bounds == liveItem.bounds,
                         overlappingItems.isEmpty
                     else {
-                        logger.error("Refusing boundary drag: hit target \(hitDescription, privacy: .public) does not match Ice's boundary at \(liveItem.bounds.debugDescription, privacy: .public)")
+                        let ownDescription = ownBoundary?.bounds.debugDescription ?? "missing"
+                        let overlapDescription = overlappingItems.map { "\($0.tag)" }.joined(separator: ", ")
+                        logger.error("Refusing boundary drag at \(liveItem.bounds.debugDescription, privacy: .public): hit target \(hitDescription, privacy: .public), own frame \(ownDescription, privacy: .public), overlapping [\(overlapDescription, privacy: .public)]")
                         return false
                     }
-                    logger.notice("Hit test found \(hitDescription, privacy: .public) at Ice's boundary; using its own frame instead")
+                    logger.notice("Hit test found \(hitDescription, privacy: .public) at Ice's boundary; accepting it by frame")
                 }
             }
             let requested: MoveDestination = switch destination {

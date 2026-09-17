@@ -81,6 +81,7 @@ final class MacOS27NativeMenuBarHiding {
 
     private func withdraw(_ item: NSStatusItem) {
         guard item.isVisible else { return }
+        logger.notice("Withdrawing \(item.autosaveName ?? "spacer", privacy: .public) (length \(item.length))")
         // Hiding an NSStatusItem clears its saved position. Preserve only our
         // own position; the pre-hide check reconciles native user reordering.
         let key = "NSStatusItem Preferred Position \(item.autosaveName ?? "")"
