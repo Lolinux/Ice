@@ -3,7 +3,6 @@
 //  Ice
 //
 
-import ApplicationServices
 import Cocoa
 import OSLog
 
@@ -18,10 +17,6 @@ final class MacOS27NativeMenuBarHiding {
     private let logger = Logger(category: "MacOS27NativeMenuBarHiding")
 
     private var spacers = [MenuBarSection.Name: Spacer]()
-
-    /// The frame of the item to the right of each concealing spacer, recorded
-    /// before the spacer was widened, while the bar was still expanded.
-    private var concealedControlFrames = [MenuBarSection.Name: CGRect]()
 
     isolated deinit {
         removeAll()
@@ -110,7 +105,6 @@ final class MacOS27NativeMenuBarHiding {
         controlFrame: CGRect? = nil
     ) {
         guard hidden else {
-            concealedControlFrames[section] = nil
             guard let spacer = spacers[section] else { return }
             withdraw(spacer.item)
             return
@@ -121,14 +115,11 @@ final class MacOS27NativeMenuBarHiding {
 
         let length: CGFloat
         if let controlFrame {
-            concealedControlFrames[section] = controlFrame
-            let menusMaxX = Self.applicationMenuMaxX(on: screen)
             length = Self.concealingLength(
                 controlMinX: controlFrame.minX,
                 screen: screen,
-                applicationMenuMaxX: menusMaxX
+                applicationMenuMaxX: screen.getApplicationMenuFrame()?.maxX
             )
-            logger.notice("Concealing \(section.rawValue, privacy: .public) with control at \(controlFrame.minX), app menus ending at \(menusMaxX ?? -1)")
         } else if spacer.item.isVisible, spacer.item.length > 1 {
             // Without a fresh frame, keep the length that is already concealing.
             length = spacer.item.length
@@ -146,91 +137,6 @@ final class MacOS27NativeMenuBarHiding {
             spacer.item.length = length
         }
         if !spacer.item.isVisible { spacer.item.isVisible = true }
-    }
-
-    /// Recomputes a concealing spacer's length after the application menus
-    /// may have changed width, such as when another app becomes frontmost.
-    @available(macOS 27.0, *)
-    func refreshConcealingLength(section: MenuBarSection.Name, screen: NSScreen) {
-        guard
-            isConcealing(section),
-            let spacer = spacers[section],
-            let controlFrame = concealedControlFrames[section]
-        else {
-            return
-        }
-        let menusMaxX = Self.applicationMenuMaxX(on: screen)
-        let length = Self.concealingLength(
-            controlMinX: controlFrame.minX,
-            screen: screen,
-            applicationMenuMaxX: menusMaxX
-        )
-        // Small differences aren't worth making the whole bar reflow.
-        guard abs(length - spacer.item.length) > 8 else { return }
-        logger.notice("Resizing \(section.rawValue, privacy: .public) spacer from \(spacer.item.length) to \(length) for app menus ending at \(menusMaxX ?? -1)")
-        spacer.item.length = length
-    }
-
-    /// Returns the right edge of the frontmost application's menus on the
-    /// given screen.
-    private static func applicationMenuMaxX(on screen: NSScreen) -> CGFloat? {
-        frontmostApplicationMenuMaxX(on: screen) ?? screen.getApplicationMenuFrame()?.maxX
-    }
-
-    /// Reads the right edge of the frontmost application's menus from its
-    /// accessibility menu bar. The system-wide hit test that
-    /// `getApplicationMenuFrame()` relies on finds no menu bar on macOS 27.
-    private static func frontmostApplicationMenuMaxX(on screen: NSScreen) -> CGFloat? {
-        guard let app = NSWorkspace.shared.frontmostApplication else {
-            return nil
-        }
-        let application = AXUIElementCreateApplication(app.processIdentifier)
-        AXUIElementSetMessagingTimeout(application, 0.25)
-        guard
-            let menuBarValue = copyAttribute(kAXMenuBarAttribute, of: application),
-            CFGetTypeID(menuBarValue) == AXUIElementGetTypeID()
-        else {
-            return nil
-        }
-        let menuBar = unsafeBitCast(menuBarValue, to: AXUIElement.self)
-        guard let children = copyAttribute(kAXChildrenAttribute, of: menuBar) as? [AXUIElement] else {
-            return nil
-        }
-        let display = CGDisplayBounds(screen.displayID)
-        let strip = CGRect(x: display.minX, y: display.minY, width: display.width, height: 40)
-        return children
-            .compactMap { frame(of: $0) }
-            .filter { $0.width > 0 && strip.contains(CGPoint(x: $0.midX, y: $0.midY)) }
-            .map(\.maxX)
-            .max()
-    }
-
-    private static func copyAttribute(_ attribute: String, of element: AXUIElement) -> CFTypeRef? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
-            return nil
-        }
-        return value
-    }
-
-    private static func frame(of element: AXUIElement) -> CGRect? {
-        guard
-            let positionValue = copyAttribute(kAXPositionAttribute, of: element),
-            let sizeValue = copyAttribute(kAXSizeAttribute, of: element),
-            CFGetTypeID(positionValue) == AXValueGetTypeID(),
-            CFGetTypeID(sizeValue) == AXValueGetTypeID()
-        else {
-            return nil
-        }
-        var position = CGPoint.zero
-        var size = CGSize.zero
-        guard
-            AXValueGetValue(unsafeBitCast(positionValue, to: AXValue.self), .cgPoint, &position),
-            AXValueGetValue(unsafeBitCast(sizeValue, to: AXValue.self), .cgSize, &size)
-        else {
-            return nil
-        }
-        return CGRect(origin: position, size: size)
     }
 
     /// Returns a spacer length that fills the space available to the left of
