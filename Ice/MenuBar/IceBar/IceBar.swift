@@ -572,14 +572,90 @@ private enum IceBarGlyphImages {
             return cached
         }
         let image: NSImage
-        if let glyph = MenuBarGlyphImage.make(from: capturedImage.cgImage) {
-            image = NSImage(cgImage: glyph.image, size: capturedImage.scaledSize)
+        if
+            let glyph = MenuBarGlyphImage.make(from: capturedImage.cgImage),
+            let trimmed = trimmedToVisiblePixels(glyph.image)
+        {
+            image = centeredImage(trimmed, scale: capturedImage.scale)
             image.isTemplate = glyph.isTemplate
         } else {
             image = capturedImage.nsImage
         }
         cache.setObject(image, forKey: key)
         return image
+    }
+
+    /// Draws a glyph centered in a slot of uniform height. Apps report status
+    /// item frames with different vertical offsets, so crops taken from those
+    /// frames place their glyphs at different heights.
+    private static func centeredImage(_ glyph: CGImage, scale: CGFloat) -> NSImage {
+        let glyphSize = CGSize(
+            width: CGFloat(glyph.width) / scale,
+            height: CGFloat(glyph.height) / scale
+        )
+        let horizontalPadding: CGFloat = 7
+        let slotSize = CGSize(
+            width: glyphSize.width + horizontalPadding * 2,
+            height: max(22, glyphSize.height)
+        )
+        return NSImage(size: slotSize, flipped: false) { bounds in
+            guard let context = NSGraphicsContext.current?.cgContext else {
+                return false
+            }
+            context.interpolationQuality = .high
+            context.draw(glyph, in: CGRect(
+                x: ((bounds.width - glyphSize.width) / 2).rounded(),
+                y: ((bounds.height - glyphSize.height) / 2).rounded(),
+                width: glyphSize.width,
+                height: glyphSize.height
+            ))
+            return true
+        }
+    }
+
+    /// Crops an image with transparency to the bounds of its visible pixels.
+    private static func trimmedToVisiblePixels(_ image: CGImage) -> CGImage? {
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0 else {
+            return nil
+        }
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn = pixels.withUnsafeMutableBytes { bytes -> Bool in
+            guard let context = CGContext(
+                data: bytes.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                return false
+            }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard drawn else {
+            return nil
+        }
+        // Bitmap context rows run top to bottom, matching `cropping(to:)`.
+        var minX = width
+        var minY = height
+        var maxX = -1
+        var maxY = -1
+        for y in 0 ..< height {
+            for x in 0 ..< width where pixels[(y * width + x) * 4 + 3] > 12 {
+                minX = min(minX, x)
+                maxX = max(maxX, x)
+                minY = min(minY, y)
+                maxY = max(maxY, y)
+            }
+        }
+        guard maxX >= minX, maxY >= minY else {
+            return nil
+        }
+        return image.cropping(to: CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1))
     }
 }
 
