@@ -496,6 +496,9 @@ private struct IceBarItemView: View {
 
     private var image: NSImage? {
         if let cachedImage = imageCache.images[item.tag] {
+            if #available(macOS 27.0, *) {
+                return IceBarGlyphImages.image(for: cachedImage)
+            }
             return cachedImage.nsImage
         }
         if #available(macOS 27.0, *) {
@@ -528,6 +531,7 @@ private struct IceBarItemView: View {
     var body: some View {
         if let image {
             Image(nsImage: image)
+                .renderingMode(image.isTemplate ? .template : .original)
                 .contentShape(Rectangle())
                 .overlay {
                     IceBarItemClickView(
@@ -540,6 +544,36 @@ private struct IceBarItemView: View {
                 .accessibilityAction(named: "left click", leftClickAction)
                 .accessibilityAction(named: "right click", rightClickAction)
         }
+    }
+}
+
+// MARK: - IceBarGlyphImages
+
+/// Converts captured menu bar crops into glyphs for the Ice Bar on macOS 27.
+///
+/// Other apps' status item images aren't available through any API, so the
+/// crops come from a capture of the menu bar. Removing the bar's background
+/// lets monochrome glyphs take the Ice Bar's foreground color, and colored
+/// glyphs keep their colors on a transparent background.
+@available(macOS 27.0, *)
+@MainActor
+private enum IceBarGlyphImages {
+    private static let cache = NSCache<AnyObject, NSImage>()
+
+    static func image(for capturedImage: MenuBarItemImageCache.CapturedImage) -> NSImage {
+        let key = capturedImage.cgImage as AnyObject
+        if let cached = cache.object(forKey: key) {
+            return cached
+        }
+        let image: NSImage
+        if let glyph = MenuBarGlyphImage.make(from: capturedImage.cgImage) {
+            image = NSImage(cgImage: glyph.image, size: capturedImage.scaledSize)
+            image.isTemplate = glyph.isTemplate
+        } else {
+            image = capturedImage.nsImage
+        }
+        cache.setObject(image, forKey: key)
+        return image
     }
 }
 

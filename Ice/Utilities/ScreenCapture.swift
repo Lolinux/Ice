@@ -134,7 +134,10 @@ enum ScreenCapture {
             width: displayFrame.width,
             height: min(40, displayFrame.height)
         )
-        let scale = CGFloat(CGDisplayPixelsWide(displayID)) / displayFrame.width
+        // CGDisplayPixelsWide reports points for scaled (Retina) display modes,
+        // which captures a blurry 1x image. Use the mode's backing pixels.
+        let pixelWidth = CGDisplayCopyDisplayMode(displayID)?.pixelWidth ?? CGDisplayPixelsWide(displayID)
+        let scale = max(1, CGFloat(pixelWidth) / displayFrame.width)
         let configuration = SCScreenshotConfiguration()
         configuration.showsCursor = false
         configuration.dynamicRange = .sdr
