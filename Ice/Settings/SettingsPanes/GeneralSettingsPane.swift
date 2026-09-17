@@ -41,10 +41,10 @@ struct GeneralSettingsPane: View {
             IceSection {
                 iceIconOptions
             }
+            IceSection {
+                iceBarOptions
+            }
             if #unavailable(macOS 27.0) {
-                IceSection {
-                    iceBarOptions
-                }
                 IceSection {
                     showOptions
                 }

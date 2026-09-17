@@ -1334,6 +1334,147 @@ extension MenuBarItemManager {
         }.value
     }
 
+    /// Clicks an item that is concealed for the Ice Bar on macOS 27.
+    ///
+    /// Concealed items aren't drawn anywhere, so the hidden items are revealed,
+    /// the item is clicked where MenuBarAgent draws it, and the items are
+    /// concealed again once the menu or window the click opened has closed.
+    @available(macOS 27.0, *)
+    func clickConcealedItem(_ item: MenuBarItem, with mouseButton: CGMouseButton) async {
+        guard let appState else {
+            return
+        }
+        let menuBarManager = appState.menuBarManager
+        menuBarManager.beginIceBarReveal()
+        defer {
+            menuBarManager.endIceBarReveal()
+        }
+
+        guard let revealedItem = await waitForRevealedItem(item) else {
+            logger.error("\(item.logString, privacy: .public) didn't appear in the menu bar after revealing hidden items")
+            return
+        }
+
+        let ownerPIDs = Set([revealedItem.ownerPID, revealedItem.sourcePID].compactMap { $0 })
+        let windowsBeforeClick = Self.onScreenWindowIDs(ownedBy: ownerPIDs)
+        do {
+            try await postMacOS27Click(at: revealedItem.bounds.center, with: mouseButton)
+        } catch {
+            logger.error("Clicking \(item.logString, privacy: .public) failed: \(error, privacy: .public)")
+            return
+        }
+        logger.notice("Clicked \(item.logString, privacy: .public) at \(revealedItem.bounds.debugDescription, privacy: .public)")
+
+        // The items are visible now, so refresh the Ice Bar's images.
+        Task {
+            await appState.imageCache.captureMacOS27Images(for: .hidden, onlyIfMissing: false)
+        }
+
+        // Keep the items revealed while the menu or window the click opened is
+        // on screen. If nothing opens, conceal them again after a moment.
+        let deadline = ContinuousClock.now + .seconds(120)
+        var sawWindow = false
+        var samplesWithoutWindow = 0
+        while ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(200))
+            let newWindows = Self.onScreenWindowIDs(ownedBy: ownerPIDs).subtracting(windowsBeforeClick)
+            if newWindows.isEmpty {
+                samplesWithoutWindow += 1
+                if samplesWithoutWindow >= (sawWindow ? 2 : 6) {
+                    break
+                }
+            } else {
+                sawWindow = true
+                samplesWithoutWindow = 0
+            }
+        }
+    }
+
+    /// Waits for a revealed item to settle at a frame in the menu bar.
+    @available(macOS 27.0, *)
+    private func waitForRevealedItem(_ item: MenuBarItem) async -> MenuBarItem? {
+        let sourcePIDs: Set<pid_t> = [item.sourcePID ?? item.ownerPID]
+        let namespaces: Set<MenuBarItemTag.Namespace> = [item.tag.namespace]
+        var previousBounds: CGRect?
+        for _ in 0 ..< 20 {
+            try? await Task.sleep(for: .milliseconds(100))
+            let items = await Task.detached(priority: .userInitiated) {
+                MacOS27MenuBarItemProvider.menuBarItems(sourcePIDs: sourcePIDs, namespaces: namespaces)
+            }.value
+            guard
+                let current = items.first(matching: item.tag),
+                NSScreen.screens.contains(where: {
+                    let display = CGDisplayBounds($0.displayID)
+                    let strip = CGRect(x: display.minX, y: display.minY, width: display.width, height: 40)
+                    return strip.contains(current.bounds)
+                })
+            else {
+                previousBounds = nil
+                continue
+            }
+            if current.bounds == previousBounds {
+                return current
+            }
+            previousBounds = current.bounds
+        }
+        return nil
+    }
+
+    /// Posts a click at a point in the menu bar, then returns the pointer.
+    @available(macOS 27.0, *)
+    private nonisolated func postMacOS27Click(at point: CGPoint, with mouseButton: CGMouseButton) async throws {
+        try await waitForUserToPauseInputForNativeDrag()
+        let source = try getEventSource(with: .combinedSessionState)
+        let originalMouseLocation = try getMouseLocation()
+        let (downType, upType): (CGEventType, CGEventType) = switch mouseButton {
+        case .right: (.rightMouseDown, .rightMouseUp)
+        default: (.leftMouseDown, .leftMouseUp)
+        }
+        guard
+            let mouseDown = CGEvent(
+                mouseEventSource: source,
+                mouseType: downType,
+                mouseCursorPosition: point,
+                mouseButton: mouseButton
+            ),
+            let mouseUp = CGEvent(
+                mouseEventSource: source,
+                mouseType: upType,
+                mouseCursorPosition: point,
+                mouseButton: mouseButton
+            )
+        else {
+            throw EventError.cannotComplete
+        }
+        MouseHelpers.warpCursor(to: point)
+        await eventSleep(for: .milliseconds(20))
+        mouseDown.post(tap: .cghidEventTap)
+        await eventSleep(for: .milliseconds(40))
+        mouseUp.post(tap: .cghidEventTap)
+        await eventSleep(for: .milliseconds(40))
+        MouseHelpers.warpCursor(to: originalMouseLocation)
+    }
+
+    /// Returns the identifiers of the on-screen windows owned by the given processes.
+    private nonisolated static func onScreenWindowIDs(ownedBy pids: Set<pid_t>) -> Set<CGWindowID> {
+        guard
+            let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]]
+        else {
+            return []
+        }
+        return Set(windows.compactMap { window in
+            guard
+                let pid = window[kCGWindowOwnerPID as String] as? pid_t,
+                pids.contains(pid),
+                let windowID = window[kCGWindowNumber as String] as? CGWindowID
+            else {
+                return nil
+            }
+            return windowID
+        })
+    }
+
     /// Posts the native Command-drag that MenuBarAgent uses for macOS 27
     /// status-item reordering, for Layout or alignment of Ice's own boundary.
     @available(macOS 27.0, *)

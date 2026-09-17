@@ -67,6 +67,10 @@ final class MenuBarManager: ObservableObject {
     /// The time of the user's most recent explicit section toggle. Ice only
     /// sends a native drag to align its boundary shortly after one.
     private var lastUserToggleTimestamp: ContinuousClock.Instant?
+    /// Whether an automatic hide couldn't align Ice's boundary without a drag.
+    private var needsUserActionToAlignBoundary = false
+    /// The number of active temporary reveals of items concealed for the Ice Bar.
+    private var iceBarRevealDepth = 0
 
     /// The managed sections in the menu bar.
     let sections = [
@@ -114,8 +118,13 @@ final class MenuBarManager: ObservableObject {
         let controlPosition = controlItem(withName: .visible)?.preferredPosition ?? 0
         // Physical position, not the previous cache's membership, determines
         // what gets hidden. The first item can have just been dragged left.
-        let hideHidden = section(withName: .hidden)?.isHidden == true
-        let hideAlwaysHidden = !hideHidden && !cache[.alwaysHidden].isEmpty &&
+        // With the Ice Bar, hidden items stay concealed in the menu bar while
+        // the bar displays them, except while one is being clicked.
+        let usesIceBar = appState.settings.general.useIceBar
+        let hideHidden = usesIceBar
+            ? iceBarRevealDepth == 0
+            : section(withName: .hidden)?.isHidden == true
+        let hideAlwaysHidden = !usesIceBar && !hideHidden && !cache[.alwaysHidden].isEmpty &&
             section(withName: .alwaysHidden)?.isEnabled == true &&
             section(withName: .alwaysHidden)?.isHidden == true
         let iceBounds = macOS27Controller.knownItemsForReordering()
@@ -162,9 +171,16 @@ final class MenuBarManager: ObservableObject {
                 logNativeVisibilityDecision("hide already in progress")
                 return
             }
-            nativeHiding.prepareForHiding(anchorPosition: controlPosition)
             let generation = nativeVisibilityGeneration
             let isUserInitiated = lastUserToggleTimestamp.map { $0.duration(to: .now) < .seconds(3) } ?? false
+            // After an automatic attempt couldn't align the boundary without a
+            // drag, wait for the user instead of republishing the handle on
+            // every cache refresh.
+            guard isUserInitiated || !needsUserActionToAlignBoundary else {
+                logNativeVisibilityDecision("waiting for a user action to align Ice's boundary")
+                return
+            }
+            nativeHiding.prepareForHiding(anchorPosition: controlPosition)
             logNativeVisibilityDecision("hiding: checking Ice's boundary (user initiated: \(isUserInitiated))")
             nativeConcealmentTask = Task { [weak self] in
                 guard let self else { return }
@@ -183,6 +199,7 @@ final class MenuBarManager: ObservableObject {
                 nativeConcealmentTask = nil
                 guard aligned else {
                     logger.error("Keeping items expanded because Ice's boundary could not be verified")
+                    needsUserActionToAlignBoundary = !isUserInitiated
                     // The failed attempt published a narrow drag handle. A
                     // logical state reset alone leaves that empty native slot
                     // behind; withdraw both handles before reporting expanded.
@@ -191,6 +208,13 @@ final class MenuBarManager: ObservableObject {
                     macOS27Controller.isConcealingItems = false
                     for section in sections { section.controlItem.state = .showSection }
                     return
+                }
+                needsUserActionToAlignBoundary = false
+                if usesIceBar {
+                    // Concealed items aren't drawn, so the Ice Bar can only show
+                    // images captured while they're still in the menu bar.
+                    await appState.imageCache.captureMacOS27Images(for: .hidden, onlyIfMissing: true)
+                    guard !Task.isCancelled, generation == nativeVisibilityGeneration else { return }
                 }
                 nativeHiding.setHidden(false, section: .alwaysHidden, anchorPosition: alwaysAnchor, screen: screen)
                 nativeHiding.setHidden(
@@ -320,10 +344,26 @@ final class MenuBarManager: ObservableObject {
         }
     }
 
+    /// Temporarily reveals items concealed for the Ice Bar, so one of them
+    /// can be clicked where MenuBarAgent draws it.
+    @available(macOS 27.0, *)
+    func beginIceBarReveal() {
+        iceBarRevealDepth += 1
+        syncNativeVisibility()
+    }
+
+    /// Ends a temporary reveal started by `beginIceBarReveal()`.
+    @available(macOS 27.0, *)
+    func endIceBarReveal() {
+        iceBarRevealDepth = max(0, iceBarRevealDepth - 1)
+        syncNativeVisibility()
+    }
+
     /// A click after Layout toggles the actual, currently expanded bar.
     func prepareForControlToggle() {
         guard #available(macOS 27.0, *) else { return }
         lastUserToggleTimestamp = .now
+        needsUserActionToAlignBoundary = false
         guard macOS27Controller.isLayoutEditing else { return }
         for section in sections { section.controlItem.state = .showSection }
         macOS27Controller.endLayoutEditing()

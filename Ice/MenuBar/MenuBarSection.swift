@@ -56,8 +56,7 @@ final class MenuBarSection {
 
     /// A Boolean value that indicates whether the Ice Bar should be used.
     private var useIceBar: Bool {
-        if #available(macOS 27.0, *) { return false }
-        return appState?.settings.general.useIceBar ?? false
+        appState?.settings.general.useIceBar ?? false
     }
 
     /// A weak reference to the menu bar manager.
@@ -183,6 +182,12 @@ final class MenuBarSection {
                 case .hidden, .alwaysHidden:
                     section.controlItem.state = .hideSection
                 }
+            }
+
+            if #available(macOS 27.0, *) {
+                // The items the Ice Bar shows must be concealed in the menu bar.
+                // This click is a user action, so Ice may align its boundary.
+                menuBarManager.syncNativeVisibility()
             }
 
             if let screen = screenForIceBar {

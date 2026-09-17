@@ -22,6 +22,10 @@ final class IceBarPanel: NSPanel {
     /// Storage for internal observers.
     private var cancellables = Set<AnyCancellable>()
 
+    /// A passive monitor that closes the panel when the user clicks in
+    /// another app, used on macOS 27 where Ice installs no event taps.
+    private var outsideClickMonitor: Any?
+
     /// Creates a new Ice Bar panel.
     init() {
         super.init(
@@ -74,7 +78,9 @@ final class IceBarPanel: NSPanel {
             }
             .store(in: &c)
 
-        if let controlItem = appState?.menuBarManager.controlItem(withName: .hidden) {
+        // On macOS 27, the hidden section's control item is never added to the
+        // menu bar, so its missing frame says nothing about the menu bar.
+        if #unavailable(macOS 27.0), let controlItem = appState?.menuBarManager.controlItem(withName: .hidden) {
             // Use the hidden control item's frame to determine if the menu bar
             // is hidden. Hide the panel if so.
             controlItem.$frame
@@ -109,7 +115,8 @@ final class IceBarPanel: NSPanel {
         }
 
         func getOrigin(for iceBarLocation: IceBarLocation) -> CGPoint {
-            let menuBarHeight = screen.getMenuBarHeight() ?? 0
+            let menuBarHeight = screen.getMenuBarHeight()
+                ?? max(screen.frame.maxY - screen.visibleFrame.maxY, NSStatusBar.system.thickness)
             let originY = ((screen.frame.maxY - 1) - menuBarHeight) - frame.height
 
             var originForRightOfScreen: CGPoint {
@@ -139,6 +146,17 @@ final class IceBarPanel: NSPanel {
                 let lowerBound = screen.frame.minX
                 let upperBound = screen.frame.maxX - frame.width
 
+                if #available(macOS 27.0, *) {
+                    guard
+                        lowerBound <= upperBound,
+                        let itemBounds = MacOS27MenuBarItemProvider.ownMenuBarItems()
+                            .first(matching: .visibleControlItem)?.bounds
+                    else {
+                        return originForRightOfScreen
+                    }
+                    return CGPoint(x: (itemBounds.midX - frame.width / 2).clamped(to: lowerBound...upperBound), y: originY)
+                }
+
                 guard
                     lowerBound <= upperBound,
                     let controlItem = appState.itemManager.itemCache.managedItems.first(matching: .visibleControlItem),
@@ -159,7 +177,6 @@ final class IceBarPanel: NSPanel {
     /// Shows the panel on the given screen, displaying the given
     /// menu bar section.
     func show(section: MenuBarSection.Name, on screen: NSScreen) async {
-        guard #unavailable(macOS 27.0) else { return }
         guard let appState else {
             return
         }
@@ -198,6 +215,17 @@ final class IceBarPanel: NSPanel {
         colorManager.updateAllProperties(with: frame, screen: screen)
 
         orderFrontRegardless()
+
+        if #available(macOS 27.0, *), outsideClickMonitor == nil {
+            outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
+                matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+            ) { [weak self] _ in
+                guard let self, isVisible, !frame.contains(NSEvent.mouseLocation) else {
+                    return
+                }
+                hide()
+            }
+        }
     }
 
     /// Hides the panel.
@@ -212,6 +240,10 @@ final class IceBarPanel: NSPanel {
     }
 
     override func close() {
+        if let outsideClickMonitor {
+            NSEvent.removeMonitor(outsideClickMonitor)
+            self.outsideClickMonitor = nil
+        }
         super.close()
         contentView = nil
         currentSection = nil
@@ -273,6 +305,16 @@ private struct IceBarContentView: View {
 
     private var items: [MenuBarItem] {
         itemManager.itemCache.managedItems(for: section)
+    }
+
+    /// Whether items without a captured image show their app's icon instead.
+    /// Concealed items aren't drawn at all on macOS 27, so an image can be
+    /// missing even with screen recording permission.
+    private static var usesApplicationIconFallback: Bool {
+        if #available(macOS 27.0, *) {
+            return true
+        }
+        return false
     }
 
     private var configuration: MenuBarAppearanceConfigurationV2 {
@@ -343,7 +385,7 @@ private struct IceBarContentView: View {
 
     @ViewBuilder
     private var content: some View {
-        if !ScreenCapture.cachedCheckPermissions() {
+        if !Self.usesApplicationIconFallback, !ScreenCapture.cachedCheckPermissions() {
             HStack {
                 Text("The Ice Bar requires screen recording permissions.")
 
@@ -369,7 +411,7 @@ private struct IceBarContentView: View {
                     .controlSize(.small)
             }
             .padding(.horizontal, 10)
-        } else if imageCache.cacheFailed(for: section) {
+        } else if !Self.usesApplicationIconFallback, imageCache.cacheFailed(for: section) {
             Text("Unable to display menu bar items")
                 .padding(.horizontal, 10)
         } else {
@@ -412,6 +454,12 @@ private struct IceBarItemView: View {
                 return
             }
             menuBarManager.section(withName: section)?.hide()
+            if #available(macOS 27.0, *) {
+                Task {
+                    await itemManager.clickConcealedItem(item, with: .left)
+                }
+                return
+            }
             Task {
                 try await Task.sleep(for: .milliseconds(25))
                 if Bridging.isWindowOnScreen(item.windowID) {
@@ -429,6 +477,12 @@ private struct IceBarItemView: View {
                 return
             }
             menuBarManager.section(withName: section)?.hide()
+            if #available(macOS 27.0, *) {
+                Task {
+                    await itemManager.clickConcealedItem(item, with: .right)
+                }
+                return
+            }
             Task {
                 try await Task.sleep(for: .milliseconds(25))
                 if Bridging.isWindowOnScreen(item.windowID) {
@@ -441,10 +495,34 @@ private struct IceBarItemView: View {
     }
 
     private var image: NSImage? {
-        guard let cachedImage = imageCache.images[item.tag] else {
+        if let cachedImage = imageCache.images[item.tag] {
+            return cachedImage.nsImage
+        }
+        if #available(macOS 27.0, *) {
+            return applicationIcon
+        }
+        return nil
+    }
+
+    /// The icon of the app that owns the item, sized like a menu bar item.
+    private var applicationIcon: NSImage? {
+        guard
+            let application = NSRunningApplication(processIdentifier: item.sourcePID ?? item.ownerPID),
+            let icon = application.icon?.copy() as? NSImage
+        else {
             return nil
         }
-        return cachedImage.nsImage
+        icon.size = CGSize(width: 18, height: 18)
+        let image = NSImage(size: CGSize(width: 28, height: 22), flipped: false) { bounds in
+            icon.draw(in: CGRect(
+                x: (bounds.width - icon.size.width) / 2,
+                y: (bounds.height - icon.size.height) / 2,
+                width: icon.size.width,
+                height: icon.size.height
+            ))
+            return true
+        }
+        return image
     }
 
     var body: some View {

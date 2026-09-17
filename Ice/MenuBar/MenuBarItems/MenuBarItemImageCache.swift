@@ -480,6 +480,39 @@ final class MenuBarItemImageCache: ObservableObject {
         }
     }
 
+    /// Captures images of a section's items while they're drawn in the menu
+    /// bar, for the Ice Bar to display after they're concealed. Concealed items
+    /// aren't drawn at all on macOS 27, so they can't be captured later.
+    @available(macOS 27.0, *)
+    @MainActor
+    func captureMacOS27Images(for section: MenuBarSection.Name, onlyIfMissing: Bool) async {
+        guard
+            let appState,
+            ScreenCapture.cachedCheckPermissions(),
+            let displayID = appState.itemManager.itemCache.displayID
+        else {
+            return
+        }
+        let items = appState.itemManager.itemCache.managedItems(for: section)
+        guard !items.isEmpty else {
+            return
+        }
+        if onlyIfMissing, items.allSatisfy({ images[$0.tag] != nil }) {
+            return
+        }
+        let result = await captureMacOS27Images(of: items, displayID: displayID)
+        guard !result.images.isEmpty else {
+            return
+        }
+        var updatedImages = images
+        updatedImages.merge(result.images) { old, new in
+            CapturedImage.isVisuallyEqual(old, new) ? old : new
+        }
+        if updatedImages != images {
+            images = updatedImages
+        }
+    }
+
     /// Updates the cache for the given sections, if necessary.
     func updateCache(sections: [MenuBarSection.Name]) async {
         guard let appState else {
