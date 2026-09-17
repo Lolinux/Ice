@@ -61,7 +61,7 @@ final class MenuBarManager: ObservableObject {
     private var deferredNativeVisibilityTask: Task<Void, Never>?
     /// The minimum time between concealment changes, long enough for
     /// MenuBarAgent's overflow animation to finish.
-    private static let nativeConcealmentChangeInterval = Duration.milliseconds(400)
+    private static let nativeConcealmentChangeInterval = Duration.milliseconds(300)
     private var nativeVisibilityGeneration: UInt64 = 0
     private var nativeDragVisibility = MacOS27NativeDragVisibilityState()
     /// The time of the user's most recent explicit section toggle. Ice only
@@ -382,6 +382,24 @@ final class MenuBarManager: ObservableObject {
                         hiddenSection.hide()
                     }
                 }
+            }
+            .store(in: &c)
+
+        // The application menus change width when another app becomes
+        // frontmost, which changes the space a concealing spacer must fill.
+        NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.didActivateApplicationNotification)
+            .debounce(for: .milliseconds(200), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard
+                    #available(macOS 27.0, *),
+                    let self,
+                    !macOS27Controller.isLayoutEditing,
+                    let screen = controlItem(withName: .visible)?.screen ?? NSScreen.main
+                else {
+                    return
+                }
+                nativeHiding.refreshConcealingLength(section: .hidden, screen: screen)
             }
             .store(in: &c)
 
