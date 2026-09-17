@@ -84,8 +84,13 @@ To build a locally signed copy without an Apple Developer team:
 xcodebuild -project Ice.xcodeproj -scheme Ice -configuration Release \
   -derivedDataPath build \
   CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= \
+  ENABLE_HARDENED_RUNTIME=NO \
   build
 ```
+
+Hardened runtime has to be off for an ad-hoc build. Otherwise library validation
+refuses to load the embedded Sparkle framework, which keeps Sparkle's own Team
+ID, and Ice crashes at launch with "Library missing".
 
 Copy `build/Build/Products/Release/Ice.app` to `/Applications`, then grant
 Accessibility (required) and Screen Recording (optional) when asked. An ad-hoc
