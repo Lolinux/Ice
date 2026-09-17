@@ -413,6 +413,7 @@ extension MenuBarItemManager {
                 }
                 guard !Task.isCancelled else { return false }
                 if nativeHidingBoundaryIsReady(on: displayID) {
+                    logger.notice("Ice's boundary is ready beside its button")
                     return true
                 }
             }
@@ -427,9 +428,16 @@ extension MenuBarItemManager {
             do { try await Task.sleep(for: .milliseconds(35)) } catch { return false }
             snapshot = await currentMacOS27ReorderSnapshot(appState: appState)
         }
-        guard !Task.isCancelled,
-              let ice = snapshot.first(matching: .visibleControlItem),
-              let boundary = snapshot.first(matching: .nativeBoundary(for: .hidden)) else { return false }
+        guard !Task.isCancelled else { return false }
+        guard
+            let ice = snapshot.first(matching: .visibleControlItem),
+            let boundary = snapshot.first(matching: .nativeBoundary(for: .hidden))
+        else {
+            let iceFound = snapshot.first(matching: .visibleControlItem) != nil
+            let boundaryFound = snapshot.first(matching: .nativeBoundary(for: .hidden)) != nil
+            logger.error("Can't find Ice's items in \(snapshot.count) menu bar items (button: \(iceFound), boundary: \(boundaryFound))")
+            return false
+        }
 
         let destination = MoveDestination.leftOfItem(ice)
         let order = snapshot.sorted { $0.bounds.minX < $1.bounds.minX }.map(\.tag)
@@ -1459,11 +1467,32 @@ extension MenuBarItemManager {
                 )
             }) else { return false }
             if isOwnBoundaryAlignment {
-                let hitIdentifier = AXHelpers.element(at: liveItem.bounds.center)
-                    .flatMap { AXHelpers.identifier(for: $0) }
-                guard hitIdentifier == liveItem.tag.title else {
-                    logger.error("Refusing boundary drag: hit target \(hitIdentifier ?? "none", privacy: .public) does not match Ice's boundary at \(liveItem.bounds.debugDescription, privacy: .public)")
-                    return false
+                let center = liveItem.bounds.center
+                let hitElement = AXHelpers.element(at: center)
+                let hitIdentifier = hitElement.flatMap { AXHelpers.identifier(for: $0) }
+                if hitIdentifier != liveItem.tag.title {
+                    let hitDescription = hitElement.map { element in
+                        let role = AXHelpers.role(for: element).map { "\($0)" } ?? "?"
+                        let pid = (try? element.pid()).map { "\($0)" } ?? "?"
+                        return "\(hitIdentifier ?? "no identifier") role=\(role) pid=\(pid)"
+                    } ?? "none"
+                    // On some macOS 27 builds, system-wide hit testing can't see
+                    // the narrow hosted boundary at all. Only then, fall back to
+                    // geometry: Ice's own fresh frame must still contain the drag
+                    // start, and no other item's frame may contain it.
+                    let ownBoundary = MacOS27MenuBarItemProvider.ownMenuBarItems().first(matching: liveItem.tag)
+                    let overlappingItems = snapshot.filter {
+                        $0.tag != liveItem.tag && $0.bounds.insetBy(dx: -1, dy: 0).contains(center)
+                    }
+                    guard
+                        hitIdentifier == nil,
+                        ownBoundary?.bounds == liveItem.bounds,
+                        overlappingItems.isEmpty
+                    else {
+                        logger.error("Refusing boundary drag: hit target \(hitDescription, privacy: .public) does not match Ice's boundary at \(liveItem.bounds.debugDescription, privacy: .public)")
+                        return false
+                    }
+                    logger.notice("Hit test found \(hitDescription, privacy: .public) at Ice's boundary; using its own frame instead")
                 }
             }
             let requested: MoveDestination = switch destination {

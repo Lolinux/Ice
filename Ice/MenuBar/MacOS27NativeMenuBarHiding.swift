@@ -19,6 +19,12 @@ final class MacOS27NativeMenuBarHiding {
         removeAll()
     }
 
+    /// A short description of a section's spacer, for logging.
+    func debugDescription(for section: MenuBarSection.Name) -> String {
+        guard let spacer = spacers[section] else { return "no spacer" }
+        return "spacer visible=\(spacer.item.isVisible) length=\(spacer.item.length)"
+    }
+
     func isConcealing(_ section: MenuBarSection.Name) -> Bool {
         guard let spacer = spacers[section] else { return false }
         return spacer.item.isVisible && spacer.item.length > 1

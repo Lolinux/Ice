@@ -55,6 +55,7 @@ final class MenuBarManager: ObservableObject {
     private let nativeHiding = MacOS27NativeMenuBarHiding()
     private var nativeConcealmentTask: Task<Void, Never>?
     private var nativeConcealmentCheckTask: Task<Void, Never>?
+    private var lastNativeVisibilityDecision: String?
     private var nativeVisibilityGeneration: UInt64 = 0
     private var nativeDragVisibility = MacOS27NativeDragVisibilityState()
     /// The time of the user's most recent explicit section toggle. Ice only
@@ -95,8 +96,14 @@ final class MenuBarManager: ObservableObject {
     /// Applies only Ice-owned spacer state. Other status items receive native input.
     func syncNativeVisibility() {
         guard #available(macOS 27.0, *), let appState else { return }
-        guard nativeDragVisibility.shouldApplyVisibilityUpdate() else { return }
-        guard let screen = controlItem(withName: .visible)?.screen ?? NSScreen.main else { return }
+        guard nativeDragVisibility.shouldApplyVisibilityUpdate() else {
+            logNativeVisibilityDecision("deferred until a native drag ends")
+            return
+        }
+        guard let screen = controlItem(withName: .visible)?.screen ?? NSScreen.main else {
+            logNativeVisibilityDecision("no screen for Ice's button")
+            return
+        }
         let cache = appState.itemManager.itemCache
         let controlPosition = controlItem(withName: .visible)?.preferredPosition ?? 0
         // Physical position, not the previous cache's membership, determines
@@ -114,6 +121,7 @@ final class MenuBarManager: ObservableObject {
         }
 
         if macOS27Controller.isLayoutEditing {
+            logNativeVisibilityDecision("showing all items while Layout is editing (reordering: \(macOS27Controller.isReorderInProgress))")
             cancelNativeConcealment()
             if macOS27Controller.isReorderInProgress {
                 nativeHiding.showForLayout(
@@ -129,10 +137,14 @@ final class MenuBarManager: ObservableObject {
         }
 
         if hideHidden, !nativeHiding.isConcealing(.hidden) {
-            guard nativeConcealmentTask == nil else { return }
+            guard nativeConcealmentTask == nil else {
+                logNativeVisibilityDecision("hide already in progress")
+                return
+            }
             nativeHiding.prepareForHiding(anchorPosition: controlPosition)
             let generation = nativeVisibilityGeneration
             let isUserInitiated = lastUserToggleTimestamp.map { $0.duration(to: .now) < .seconds(3) } ?? false
+            logNativeVisibilityDecision("hiding: checking Ice's boundary (user initiated: \(isUserInitiated))")
             nativeConcealmentTask = Task { [weak self] in
                 guard let self else { return }
                 // No mouse monitor: only an explicit request to hide reaches
@@ -143,7 +155,10 @@ final class MenuBarManager: ObservableObject {
                     displayID: screen.displayID,
                     allowingDrag: isUserInitiated
                 )
-                guard !Task.isCancelled, generation == nativeVisibilityGeneration else { return }
+                guard !Task.isCancelled, generation == nativeVisibilityGeneration else {
+                    logNativeVisibilityDecision("hide cancelled by a newer request")
+                    return
+                }
                 nativeConcealmentTask = nil
                 guard aligned else {
                     logger.error("Keeping items expanded because Ice's boundary could not be verified")
@@ -159,6 +174,7 @@ final class MenuBarManager: ObservableObject {
                 nativeHiding.setHidden(false, section: .alwaysHidden, anchorPosition: alwaysAnchor, screen: screen)
                 nativeHiding.setHidden(true, section: .hidden, anchorPosition: controlPosition, screen: screen)
                 macOS27Controller.isConcealingItems = true
+                logNativeVisibilityDecision("hidden: \(nativeHiding.debugDescription(for: .hidden))")
                 scheduleNativeConcealmentCheck(screen: screen)
             }
             return
@@ -169,6 +185,10 @@ final class MenuBarManager: ObservableObject {
         nativeHiding.setHidden(hideAlwaysHidden, section: .alwaysHidden, anchorPosition: alwaysAnchor, screen: screen)
         nativeHiding.setHidden(hideHidden, section: .hidden, anchorPosition: controlPosition, screen: screen)
         macOS27Controller.isConcealingItems = hideHidden || hideAlwaysHidden
+        logNativeVisibilityDecision(
+            "applied: hidden=\(hideHidden), alwaysHidden=\(hideAlwaysHidden), " +
+            "\(nativeHiding.debugDescription(for: .hidden)), always \(nativeHiding.debugDescription(for: .alwaysHidden))"
+        )
         if macOS27Controller.isConcealingItems, !wasConcealing {
             scheduleNativeConcealmentCheck(screen: screen)
         }
@@ -218,6 +238,14 @@ final class MenuBarManager: ObservableObject {
             }
         }
         return true
+    }
+
+    /// Logs a macOS 27 visibility decision when it differs from the last one,
+    /// so the periodic cache refresh doesn't repeat it every five seconds.
+    private func logNativeVisibilityDecision(_ decision: String) {
+        guard decision != lastNativeVisibilityDecision else { return }
+        lastNativeVisibilityDecision = decision
+        logger.notice("macOS 27 visibility: \(decision, privacy: .public)")
     }
 
     private func cancelNativeConcealment() {
