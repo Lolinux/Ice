@@ -54,6 +54,7 @@ final class MenuBarManager: ObservableObject {
     let macOS27Controller = MacOS27MenuBarController()
     private let nativeHiding = MacOS27NativeMenuBarHiding()
     private var nativeConcealmentTask: Task<Void, Never>?
+    private var nativeConcealmentCheckTask: Task<Void, Never>?
     private var nativeVisibilityGeneration: UInt64 = 0
     private var nativeDragVisibility = MacOS27NativeDragVisibilityState()
     /// The time of the user's most recent explicit section toggle. Ice only
@@ -158,14 +159,65 @@ final class MenuBarManager: ObservableObject {
                 nativeHiding.setHidden(false, section: .alwaysHidden, anchorPosition: alwaysAnchor, screen: screen)
                 nativeHiding.setHidden(true, section: .hidden, anchorPosition: controlPosition, screen: screen)
                 macOS27Controller.isConcealingItems = true
+                scheduleNativeConcealmentCheck(screen: screen)
             }
             return
         }
 
         if !hideHidden { cancelNativeConcealment() }
+        let wasConcealing = nativeHiding.isConcealing(.hidden) || nativeHiding.isConcealing(.alwaysHidden)
         nativeHiding.setHidden(hideAlwaysHidden, section: .alwaysHidden, anchorPosition: alwaysAnchor, screen: screen)
         nativeHiding.setHidden(hideHidden, section: .hidden, anchorPosition: controlPosition, screen: screen)
         macOS27Controller.isConcealingItems = hideHidden || hideAlwaysHidden
+        if macOS27Controller.isConcealingItems, !wasConcealing {
+            scheduleNativeConcealmentCheck(screen: screen)
+        }
+    }
+
+    /// Confirms that Ice's own button is still on the bar after a spacer was
+    /// widened. The always-hidden spacer's position is a guess, and a spacer
+    /// that lands to the right of Ice pushes Ice's button into the overflow,
+    /// leaving no way to click it. Withdraw the spacers if that happens.
+    @available(macOS 27.0, *)
+    private func scheduleNativeConcealmentCheck(screen: NSScreen) {
+        nativeConcealmentCheckTask?.cancel()
+        nativeConcealmentCheckTask = Task { [weak self] in
+            // Accessibility can briefly report no settled frame while hosted
+            // variants update, so only a repeated miss counts as a failure.
+            for _ in 0 ..< 4 {
+                do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+                guard let self, macOS27Controller.isConcealingItems else { return }
+                if isIceButtonOnBar(screen: screen) { return }
+            }
+            guard let self, !Task.isCancelled, macOS27Controller.isConcealingItems else { return }
+            logger.error("Ice's button left the menu bar after hiding; showing all items")
+            let controlPosition = controlItem(withName: .visible)?.preferredPosition ?? 0
+            cancelNativeConcealment()
+            nativeHiding.setHidden(false, section: .alwaysHidden, anchorPosition: controlPosition, screen: screen)
+            nativeHiding.setHidden(false, section: .hidden, anchorPosition: controlPosition, screen: screen)
+            macOS27Controller.isConcealingItems = false
+            for section in sections { section.controlItem.state = .showSection }
+        }
+    }
+
+    /// Returns whether Ice's visible control item is on the menu bar strip of
+    /// the given screen and to the right of every widened spacer.
+    @available(macOS 27.0, *)
+    private func isIceButtonOnBar(screen: NSScreen) -> Bool {
+        let display = CGDisplayBounds(screen.displayID)
+        let strip = CGRect(x: display.minX, y: display.minY, width: display.width, height: 40)
+        let items = MacOS27MenuBarItemProvider.ownMenuBarItems()
+        guard let ice = items.first(matching: .visibleControlItem), strip.contains(ice.bounds) else {
+            return false
+        }
+        for section in [MenuBarSection.Name.hidden, .alwaysHidden] where nativeHiding.isConcealing(section) {
+            if let spacer = items.first(matching: .nativeBoundary(for: section)),
+               strip.contains(spacer.bounds),
+               spacer.bounds.minX >= ice.bounds.minX {
+                return false
+            }
+        }
+        return true
     }
 
     private func cancelNativeConcealment() {
