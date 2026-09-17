@@ -179,6 +179,7 @@ struct GeneralSettingsPane: View {
         useIceBar
         if settings.useIceBar {
             iceBarLocationPicker
+            iceBarBackgroundOpacitySlider
         }
     }
 
@@ -186,6 +187,21 @@ struct GeneralSettingsPane: View {
     private var useIceBar: some View {
         Toggle("Use Ice Bar", isOn: $settings.useIceBar)
             .annotation("Show hidden menu bar items in a separate bar below the menu bar.")
+    }
+
+    @ViewBuilder
+    private var iceBarBackgroundOpacitySlider: some View {
+        LabeledContent {
+            IceSlider(
+                LocalizedStringKey("\(Int((settings.iceBarBackgroundOpacity * 100).rounded()))%"),
+                value: $settings.iceBarBackgroundOpacity,
+                in: 0...1,
+                step: 0.05
+            )
+        } label: {
+            Text("Background opacity")
+        }
+        .annotation("How opaque the Ice Bar's background is. Items stay fully visible.")
     }
 
     @ViewBuilder

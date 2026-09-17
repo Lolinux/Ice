@@ -274,6 +274,7 @@ final class MenuBarItemImageCache: ObservableObject {
             let liveItems = capturable.compactMap { refreshedByTag[$0.tag] }
             if let capture = await ScreenCapture.captureMenuBarDisplayStrip(displayID: displayID),
                isPlausibleMacOS27Capture(capture) {
+                MacOS27GlyphDebug.write(capture.image, name: "strip")
                 // A drag can occur while the screenshot is being produced.
                 // Only associate pixels with an item whose frame stayed put.
                 let afterCapture = await Task.detached(priority: .userInitiated) {
@@ -369,6 +370,11 @@ final class MenuBarItemImageCache: ObservableObject {
 
             guard let image = capture.image.cropping(to: cropRect),
                   !image.isTransparent(alphaThreshold: 0.05) else { continue }
+
+            if MacOS27GlyphDebug.isEnabled {
+                MacOS27GlyphDebug.write(image, name: "\(item.tag)-raw")
+                MacOS27GlyphDebug.log("Captured \(item.tag): frame \(bounds), crop \(cropRect), scale \(capture.scale)")
+            }
 
             cropOwners[cropRect] = item.tag
             result.images[item.tag] = CapturedImage(

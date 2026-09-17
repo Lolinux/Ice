@@ -34,6 +34,9 @@ final class GeneralSettings: ObservableObject {
     /// The location where the Ice Bar appears.
     @Published var iceBarLocation: IceBarLocation = .dynamic
 
+    /// The opacity of the Ice Bar's background. Items stay fully opaque.
+    @Published var iceBarBackgroundOpacity: Double = 1
+
     /// A Boolean value that indicates whether the hidden section
     /// should be shown when the mouse pointer clicks in an empty
     /// area of the menu bar.
@@ -91,6 +94,7 @@ final class GeneralSettings: ObservableObject {
         Defaults.ifPresent(key: .showOnHover, assign: &showOnHover)
         Defaults.ifPresent(key: .showOnScroll, assign: &showOnScroll)
         Defaults.ifPresent(key: .itemSpacingOffset, assign: &itemSpacingOffset)
+        Defaults.ifPresent(key: .iceBarBackgroundOpacity, assign: &iceBarBackgroundOpacity)
         Defaults.ifPresent(key: .autoRehide, assign: &autoRehide)
         Defaults.ifPresent(key: .rehideInterval, assign: &rehideInterval)
 
@@ -164,6 +168,13 @@ final class GeneralSettings: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { location in
                 Defaults.set(location.rawValue, forKey: .iceBarLocation)
+            }
+            .store(in: &c)
+
+        $iceBarBackgroundOpacity
+            .receive(on: DispatchQueue.main)
+            .sink { opacity in
+                Defaults.set(opacity, forKey: .iceBarBackgroundOpacity)
             }
             .store(in: &c)
 

@@ -21,6 +21,7 @@ struct MenuBarItemContainer<Content: View>: View {
     @ObservedObject private var menuBarManager: MenuBarManager
 
     private let accessor: ColorInfoAccessor
+    private let backgroundOpacity: Double
     private let content: Content
 
     private var colorInfo: MenuBarAverageColorInfo? {
@@ -40,11 +41,17 @@ struct MenuBarItemContainer<Content: View>: View {
         appearanceManager.configuration.current
     }
 
-    init(appState: AppState, accessor: ColorInfoAccessor, @ViewBuilder content: () -> Content) {
+    init(
+        appState: AppState,
+        accessor: ColorInfoAccessor,
+        backgroundOpacity: Double = 1,
+        @ViewBuilder content: () -> Content
+    ) {
         self.appState = appState
         self.appearanceManager = appState.appearanceManager
         self.menuBarManager = appState.menuBarManager
         self.accessor = accessor
+        self.backgroundOpacity = backgroundOpacity
         self.content = content()
     }
 
@@ -53,10 +60,11 @@ struct MenuBarItemContainer<Content: View>: View {
             .foregroundStyle(foreground)
             .background {
                 contentBackground
+                    .opacity(backgroundOpacity)
             }
             .overlay {
                 contentOverlay
-                    .opacity(0.2)
+                    .opacity(0.2 * backgroundOpacity)
                     .allowsHitTesting(false)
             }
     }
@@ -111,7 +119,16 @@ extension View {
     /// - Parameters:
     ///   - appState: The shared ``AppState`` object.
     ///   - colorInfo: Information for the average color of the menu bar.
-    func menuBarItemContainer(appState: AppState, colorInfo: MenuBarAverageColorInfo?) -> some View {
-        MenuBarItemContainer(appState: appState, accessor: .manual(colorInfo)) { self }
+    ///   - backgroundOpacity: The opacity of the background and tint.
+    func menuBarItemContainer(
+        appState: AppState,
+        colorInfo: MenuBarAverageColorInfo?,
+        backgroundOpacity: Double = 1
+    ) -> some View {
+        MenuBarItemContainer(
+            appState: appState,
+            accessor: .manual(colorInfo),
+            backgroundOpacity: backgroundOpacity
+        ) { self }
     }
 }

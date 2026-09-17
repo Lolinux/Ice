@@ -361,6 +361,10 @@ private struct IceBarContentView: View {
         }
     }
 
+    private var backgroundOpacity: Double {
+        appState.settings.general.iceBarBackgroundOpacity
+    }
+
     private var shadowOpacity: CGFloat {
         configuration.current.hasShadow ? 0.5 : 0.33
     }
@@ -371,16 +375,21 @@ private struct IceBarContentView: View {
                 .frame(height: contentHeight)
                 .padding(.horizontal, horizontalPadding)
                 .padding(.vertical, verticalPadding)
-                .menuBarItemContainer(appState: appState, colorInfo: colorManager.colorInfo)
+                .menuBarItemContainer(
+                    appState: appState,
+                    colorInfo: colorManager.colorInfo,
+                    backgroundOpacity: backgroundOpacity
+                )
                 .foregroundStyle(colorManager.colorInfo?.color.brightness ?? 0 > 0.67 ? .black : .white)
                 .clipShape(clipShape)
-                .shadow(color: .black.opacity(shadowOpacity), radius: 2.5)
+                .shadow(color: .black.opacity(shadowOpacity * backgroundOpacity), radius: 2.5)
 
             if configuration.current.hasBorder {
                 clipShape
                     .inset(by: configuration.current.borderWidth / 2)
                     .stroke(lineWidth: configuration.current.borderWidth)
                     .foregroundStyle(Color(cgColor: configuration.current.borderColor))
+                    .opacity(backgroundOpacity)
             }
         }
         .padding(5)
@@ -503,7 +512,7 @@ private struct IceBarItemView: View {
     private var image: NSImage? {
         if let cachedImage = imageCache.images[item.tag] {
             if #available(macOS 27.0, *) {
-                return IceBarGlyphImages.image(for: cachedImage)
+                return IceBarGlyphImages.image(for: cachedImage, tag: item.tag)
             }
             return cachedImage.nsImage
         }
@@ -566,20 +575,30 @@ private struct IceBarItemView: View {
 private enum IceBarGlyphImages {
     private static let cache = NSCache<AnyObject, NSImage>()
 
-    static func image(for capturedImage: MenuBarItemImageCache.CapturedImage) -> NSImage {
+    static func image(for capturedImage: MenuBarItemImageCache.CapturedImage, tag: MenuBarItemTag) -> NSImage {
         let key = capturedImage.cgImage as AnyObject
         if let cached = cache.object(forKey: key) {
             return cached
         }
         let image: NSImage
-        if
-            let glyph = MenuBarGlyphImage.make(from: capturedImage.cgImage),
-            let trimmed = trimmedToVisiblePixels(glyph.image)
-        {
+        let glyph = MenuBarGlyphImage.make(from: capturedImage.cgImage)
+        let trimmed = glyph.flatMap { trimmedToVisiblePixels($0.image) }
+        if let glyph, let trimmed {
             image = centeredImage(trimmed, scale: capturedImage.scale)
             image.isTemplate = glyph.isTemplate
         } else {
             image = capturedImage.nsImage
+        }
+        if MacOS27GlyphDebug.isEnabled {
+            if let glyph {
+                MacOS27GlyphDebug.write(glyph.image, name: "\(tag)-glyph")
+            }
+            if let trimmed {
+                MacOS27GlyphDebug.write(trimmed, name: "\(tag)-trimmed")
+            }
+            let captureSize = "\(capturedImage.cgImage.width)x\(capturedImage.cgImage.height)"
+            let trimmedSize = trimmed.map { "\($0.width)x\($0.height)" } ?? "none"
+            MacOS27GlyphDebug.log("Ice Bar \(tag): capture \(captureSize) at \(capturedImage.scale)x, extracted \(glyph != nil) template \(glyph?.isTemplate ?? false), trimmed \(trimmedSize)")
         }
         cache.setObject(image, forKey: key)
         return image
