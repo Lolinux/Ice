@@ -14,18 +14,22 @@ with additional hardening. Every macOS 27 path is gated on
 ## What works on macOS 27
 
 - Hiding and showing the Hidden section with Ice's button or a hotkey.
-- The Always Hidden section (Option-click or hotkey), with a safety check.
+- The Ice Bar: clicking Ice's button shows the hidden items in a bar below
+  it, with an adjustable background opacity.
 - The Menu Bar Layout editor: item thumbnails and moving items between sections.
 - Menu bar appearance settings.
 - Native input for every other item. The clock still opens Notification Center.
 
 ## What doesn't
 
-- The Ice Bar, search panel, show on hover/click/scroll, auto-rehide, item
-  spacing and app-menu hiding are disabled on macOS 27.
-- Hidden items move into Apple's native overflow (the « button), so they are
-  still reachable from there.
-- Toggling very quickly can leave fading icons for a moment.
+- The search panel, show on hover/click/scroll, auto-rehide, item spacing and
+  app-menu hiding are disabled on macOS 27.
+- Without the Ice Bar, hidden items move into Apple's native overflow (the «
+  button), so they are still reachable from there.
+- Clicking an item in the Ice Bar briefly reveals the hidden items in the menu
+  bar, which reflows the bar once.
+- Items that macOS keeps in its own overflow aren't drawn anywhere, so the Ice
+  Bar shows their app's icon, and clicking one opens the system overflow.
 - Clock, Control Center and other items hosted by `MenuBarAgent` can't be
   dragged from the Layout editor. You can still Command-drag them yourself.
 - Opening the Layout editor shows every item until you leave it.
@@ -34,44 +38,54 @@ with additional hardening. Every macOS 27 path is gated on
 
 **Enumeration.** Items are read through Accessibility from each running app's
 extras menu bar. Items without a stable identifier are tracked by process-local
-AX equality, so labels that change (such as a CPU percentage) keep their tile.
+AX equality. MenuBarAgent's overflow button is excluded, and an item whose frame
+overlaps that button or another item is treated as not drawn: items in the
+system overflow report stale frames stacked on the button.
 
 **Hiding.** Ice owns a blank status item immediately to the left of its visible
-button. To hide, Ice widens it to fit the native status region, so
-`MenuBarAgent`'s own overflow takes everything to its left. To show, Ice
-withdraws it, because even a one-point item reserves a visible slot. No private
-API is used.
+button. To hide, Ice widens it so `MenuBarAgent`'s own overflow takes everything
+to its left, sized from Ice's position relative to the notch. To show, Ice
+withdraws it, because even a one-point item reserves a visible slot. Changes are
+coalesced to one every 300 ms so rapid clicks don't stack overflow animations.
+No private API is used.
 
 **Alignment.** Before hiding, Ice checks through its own accessibility frames
-that the blank item sits directly left of its button. If it doesn't, for example
-after you Command-dragged items across Ice, Ice moves only its own blank item
-with one native Command-drag.
+that the blank item sits directly left of its button. If it doesn't, Ice moves
+only its own blank item with one native Command-drag. System hit testing returns
+MenuBarAgent's unidentified host element there, so the drag is accepted only when
+that element's frame matches Ice's own boundary frame.
 
-**Layout.** Moving an item between sections performs a native Command-drag and
-then verifies the new order through Accessibility.
+**Ice Bar.** In Ice Bar mode the hidden items stay concealed, and only the bar
+opens and closes. Clicking an item reveals the hidden items, clicks the item
+where MenuBarAgent draws it, and conceals them again once its menu closes.
 
-**Thumbnails.** One screenshot of the menu bar strip is cropped using fresh AX
-frames, and the glyph is separated from the bar's background. Screen Recording
-is only needed for these thumbnails.
+**Thumbnails.** Other apps' status item images aren't available through any
+API. One Retina screenshot of the menu bar strip is cropped using fresh AX frames,
+and the glyph is separated from the bar's background. Concealed items aren't
+drawn, so Ice Bar images are captured just before concealing and whenever items
+are revealed. Screen Recording is only needed for these images.
 
 ## Hardening in this branch
 
 - Ice never drags its boundary without a user action. Launch and background
-  refreshes leave items expanded if alignment would need a drag. A click or
-  hotkey within the last 3 seconds allows it.
-- Native drags wait for you to stop typing, moving the pointer, and holding
-  modifiers or buttons, and give up after 5 seconds. While the synthetic
-  Command key is down, physical keyboard and mouse input is suppressed, so a
-  keystroke can't become a Command shortcut.
+  refreshes leave items expanded if alignment would need a drag.
+- Native drags and clicks wait until no modifiers or buttons are held and
+  nothing was typed in the last half second. Keyboard input is suppressed while
+  the synthetic Command key is down.
 - The Layout editor can't drag items hosted by `MenuBarAgent`. Synthetic drags
   of those items crashed `MenuBarAgent` during testing of #980.
 - After a spacer is widened, Ice confirms that its own button is still on the
-  bar. If not (for example, if the Always Hidden spacer landed to the right of
-  Ice), it withdraws the spacers and shows everything.
+  bar; otherwise it withdraws the spacers and shows everything.
 - `MenuBarItemService` accepts ad-hoc-signed builds
   ([jordanbaird/Ice#950](https://github.com/jordanbaird/Ice/pull/950)).
 - Probe tools that posted real input or used the private assessment-mode API
   were removed.
+
+## Troubleshooting
+
+Set `defaults write com.jordanbaird.Ice DebugDumpMacOS27Glyphs -bool true` to
+write menu bar captures, per-item crops and their frames to
+`~/Library/Caches/com.jordanbaird.Ice/GlyphDebug`.
 
 ## Building
 
