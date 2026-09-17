@@ -60,6 +60,112 @@ enum MacOS27MenuBarItemProvider {
         return assemble(items)
     }
 
+    /// Performs an accessibility action on an item's element, which works
+    /// while the item is concealed and not drawn in the menu bar.
+    ///
+    /// A right click prefers `AXShowMenu`; a left click prefers `AXPress`.
+    /// Returns `false` if the element can't be found or has neither action.
+    @MainActor
+    static func pressItem(_ item: MenuBarItem, showingMenu: Bool) -> Bool {
+        let frames = NSScreen.screens.map { screen in
+            let display = CGDisplayBounds(screen.displayID)
+            return CGRect(x: display.minX, y: display.minY, width: display.width, height: maxItemHeight)
+        }
+        var pids: Set<pid_t> = [item.ownerPID]
+        if let sourcePID = item.sourcePID {
+            pids.insert(sourcePID)
+        }
+        let owners = NSWorkspace.shared.runningApplications.filter { app in
+            pids.contains(app.processIdentifier) || namespace(for: app) == item.tag.namespace
+        }
+        var candidates = [RawItem]()
+        for owner in owners {
+            let snapshot = rawItems(
+                from: owner,
+                displayBounds: nil,
+                menuBarFrames: frames,
+                includeSupplementaryMetadata: false,
+                includingOffscreenItems: true
+            )
+            for rawItem in snapshot.items where rawItem.namespace == item.tag.namespace {
+                if rawItem.identityTitle == item.tag.title {
+                    candidates.append(rawItem)
+                }
+            }
+        }
+        candidates.sort { lhs, rhs in
+            if lhs.bounds.minX == rhs.bounds.minX {
+                return lhs.bounds.minY < rhs.bounds.minY
+            }
+            return lhs.bounds.minX < rhs.bounds.minX
+        }
+        let index = item.tag.instanceIndex
+        guard let rawItem = candidates.indices.contains(index) ? candidates[index] : candidates.first else {
+            logger.error("No accessibility element for \(item.logString, privacy: .public)")
+            return false
+        }
+
+        let preferred: [Action] = showingMenu ? [.showMenu, .press] : [.press, .showMenu]
+        for element in [rawItem.element] + AXHelpers.children(for: rawItem.element) {
+            let actions = (try? element.actions()) ?? []
+            guard let action = preferred.first(where: actions.contains) else {
+                continue
+            }
+            // A press can open a menu that tracks before the owner replies.
+            // Don't hold the main thread for that; the action is already sent.
+            AXUIElementSetMessagingTimeout(element.element, 0.3)
+            do {
+                try element.performAction(action)
+            } catch AXError.cannotComplete {
+                // Timed out waiting for a reply, which a tracking menu causes.
+            } catch {
+                logger.error("\(action.rawValue, privacy: .public) on \(item.logString, privacy: .public) failed: \(error, privacy: .public)")
+                continue
+            }
+            logger.notice("Performed \(action.rawValue, privacy: .public) on \(item.logString, privacy: .public) (actions: \(actions.map(\.rawValue), privacy: .public))")
+            return true
+        }
+        logger.error("\(item.logString, privacy: .public) has no press or show-menu action")
+        return false
+    }
+
+    /// Writes MenuBarAgent's own accessibility tree to the glyph debug log.
+    ///
+    /// Each app publishes its status items under its own `AXExtrasMenuBar`,
+    /// but macOS 27 draws them from MenuBarAgent, and an app's frames go stale
+    /// once macOS moves the item. This dump shows what MenuBarAgent reports.
+    @MainActor
+    static func dumpMenuBarAgentTree() {
+        guard MacOS27GlyphDebug.isEnabled else { return }
+        let agents = NSWorkspace.shared.runningApplications
+            .filter { $0.bundleIdentifier == "com.apple.MenuBarAgent" }
+        for agent in agents {
+            guard let application = AXHelpers.application(for: agent) else { continue }
+            let windows: [UIElement] = (try? application.arrayAttribute(.windows)) ?? []
+            MacOS27GlyphDebug.log("Agent pid \(agent.processIdentifier): \(windows.count) windows")
+            for (windowIndex, window) in windows.enumerated() {
+                MacOS27GlyphDebug.log("  window \(windowIndex) frame=\(AXHelpers.frame(for: window)?.debugDescription ?? "none")")
+                describe(window, depth: 2, limit: 3)
+            }
+        }
+    }
+
+    @MainActor
+    private static func describe(_ element: UIElement, depth: Int, limit: Int) {
+        guard depth <= limit + 1 else { return }
+        for child in AXHelpers.children(for: element) {
+            let role = AXHelpers.role(for: child)?.rawValue ?? "?"
+            let identifier = AXHelpers.identifier(for: child) ?? "-"
+            let description = AXHelpers.description(for: child) ?? AXHelpers.title(for: child) ?? "-"
+            let frame = AXHelpers.frame(for: child)?.debugDescription ?? "none"
+            let pid = AXHelpers.pid(for: child).map(String.init) ?? "-"
+            MacOS27GlyphDebug.log(
+                String(repeating: "  ", count: depth) + "\(role) id=\(identifier) desc=\(description) pid=\(pid) frame=\(frame)"
+            )
+            describe(child, depth: depth + 1, limit: limit)
+        }
+    }
+
     static func menuBarItems(
         on display: CGDirectDisplayID? = nil,
         option _: MenuBarItem.ListOption
@@ -123,6 +229,98 @@ enum MacOS27MenuBarItemProvider {
         )
     }
 
+    /// Live geometry for the status items macOS is drawing, read from
+    /// MenuBarAgent's own accessibility tree.
+    ///
+    /// An app's `AXExtrasMenuBar` keeps reporting the frame an item had before
+    /// macOS moved it, so items that are drawn again after leaving the
+    /// overflow still look stacked there. MenuBarAgent draws the bar, and its
+    /// per-item containers carry the positions it actually used.
+    struct AgentGeometry {
+        /// Container frames per owning process, ordered left to right.
+        var framesByOwner = [pid_t: [CGRect]]()
+        /// Frames of MenuBarAgent's overflow buttons.
+        var overflowFrames = [CGRect]()
+    }
+
+    static func agentGeometry() -> AgentGeometry {
+        var geometry = AgentGeometry()
+        let agents = NSWorkspace.shared.runningApplications
+            .filter { $0.bundleIdentifier == "com.apple.MenuBarAgent" }
+        for agent in agents {
+            guard let application = AXHelpers.application(for: agent) else { continue }
+            let windows: [UIElement] = (try? application.arrayAttribute(.windows)) ?? []
+            for window in windows {
+                for child in AXHelpers.children(for: window) {
+                    guard let frame = AXHelpers.frame(for: child) else { continue }
+                    let childPID = AXHelpers.pid(for: child)
+                    if AXHelpers.role(for: child) == .button, childPID == agent.processIdentifier {
+                        // The overflow control sits beside the containers.
+                        geometry.overflowFrames.append(frame)
+                        continue
+                    }
+                    // The container nests the owning app's own element.
+                    let owner = AXHelpers.children(for: child)
+                        .compactMap { AXHelpers.pid(for: $0) }
+                        .first { $0 != agent.processIdentifier } ?? childPID
+                    guard let owner else { continue }
+                    geometry.framesByOwner[owner, default: []].append(frame)
+                }
+            }
+        }
+        for (owner, frames) in geometry.framesByOwner {
+            geometry.framesByOwner[owner] = frames.sorted { $0.minX < $1.minX }
+        }
+        return geometry
+    }
+
+    /// Replaces each item's frame with the one MenuBarAgent drew it at, and
+    /// marks the items it isn't drawing at all.
+    private static func applyingAgentGeometry(to items: [MenuBarItem]) -> [MenuBarItem] {
+        let geometry = agentGeometry()
+        guard !geometry.framesByOwner.isEmpty else { return items }
+
+        // Match an owner's items to its containers left to right.
+        var nextIndexByOwner = [pid_t: Int]()
+        var frameByTag = [MenuBarItemTag: CGRect]()
+        for item in items.sorted(by: { $0.bounds.minX < $1.bounds.minX }) {
+            let owner = item.sourcePID ?? item.ownerPID
+            guard let frames = geometry.framesByOwner[owner] else { continue }
+            let index = nextIndexByOwner[owner, default: 0]
+            guard frames.indices.contains(index) else { continue }
+            nextIndexByOwner[owner] = index + 1
+            frameByTag[item.tag] = frames[index]
+        }
+        let allFrames = Array(frameByTag.values)
+
+        return items.map { item in
+            guard let frame = frameByTag[item.tag] else { return item }
+            let overlapsOverflow = geometry.overflowFrames.contains { $0.intersects(frame) }
+            let overlapsOther = allFrames.contains { other in
+                other != frame && other.intersection(frame).width > 6
+            }
+            // Containers are the full height of the menu bar; keep the item's
+            // own height, which is what a capture should crop.
+            let height = min(frame.height, max(item.bounds.height, 22))
+            return MenuBarItem(
+                tag: item.tag,
+                windowID: item.windowID,
+                ownerPID: item.ownerPID,
+                sourcePID: item.sourcePID,
+                bounds: CGRect(
+                    x: frame.minX,
+                    y: frame.midY - height / 2,
+                    width: frame.width,
+                    height: height
+                ),
+                title: item.title,
+                accessibilityHelp: item.accessibilityHelp,
+                accessibilityValue: item.accessibilityValue,
+                isOnScreen: !overlapsOverflow && !overlapsOther
+            )
+        }
+    }
+
     private static func menuBarItems(
         from runningApplications: [NSRunningApplication],
         displayBounds: CGRect?,
@@ -150,7 +348,8 @@ enum MacOS27MenuBarItemProvider {
             })
         }
 
-        return assemble(rawItems)
+        let assembled = assemble(rawItems)
+        return AXHelpers.performOnMain { applyingAgentGeometry(to: assembled) }
     }
 
     /// A grace-period expiry is not enough to remove a retained tile: confirm
@@ -309,7 +508,8 @@ enum MacOS27MenuBarItemProvider {
                     bounds: frame,
                     ownerPID: ownerPID,
                     accessibilityHelp: accessibilityHelp,
-                    accessibilityValue: accessibilityValue
+                    accessibilityValue: accessibilityValue,
+                    element: child
                 )
             )
         }
@@ -324,6 +524,7 @@ enum MacOS27MenuBarItemProvider {
         let ownerPID: pid_t
         let accessibilityHelp: String?
         let accessibilityValue: String?
+        let element: UIElement
     }
 
     private static func assemble(_ rawItems: [RawItem]) -> [MenuBarItem] {

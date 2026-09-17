@@ -1336,12 +1336,18 @@ extension MenuBarItemManager {
 
     /// Clicks an item that is concealed for the Ice Bar on macOS 27.
     ///
-    /// Concealed items aren't drawn anywhere, so the hidden items are revealed,
-    /// the item is clicked where MenuBarAgent draws it, and the items are
-    /// concealed again once the menu or window the click opened has closed.
+    /// The item is pressed through Accessibility, which works while it isn't
+    /// drawn. If that isn't possible, the hidden items are revealed, the item
+    /// is clicked where MenuBarAgent draws it, and the items are concealed
+    /// again once the menu or window the click opened has closed.
     @available(macOS 27.0, *)
     func clickConcealedItem(_ item: MenuBarItem, with mouseButton: CGMouseButton) async {
         guard let appState else {
+            return
+        }
+        // Press the item through Accessibility where possible, so the hidden
+        // items stay out of the menu bar. Reveal and click only as a fallback.
+        if MacOS27MenuBarItemProvider.pressItem(item, showingMenu: mouseButton == .right) {
             return
         }
         let menuBarManager = appState.menuBarManager
