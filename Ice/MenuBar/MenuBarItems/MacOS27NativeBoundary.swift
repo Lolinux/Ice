@@ -47,17 +47,28 @@ enum MacOS27NativeBoundary {
             boundary.minX, boundary.minY, boundary.width, boundary.height,
             control.minX, control.minY, control.width, control.height,
         ]
-        guard geometry.allSatisfy(\.isFinite),
-              canDrag(from: boundary, to: control, on: display),
-              boundary.width <= 3, abs(boundary.midY - control.midY) < 0.5 else { return false }
+        guard
+            geometry.allSatisfy(\.isFinite),
+            canDrag(from: boundary, to: control, on: display),
+            boundary.width <= 3,
+            abs(boundary.midY - control.midY) < 0.5
+        else {
+            return false
+        }
         let gap = control.minX - boundary.maxX
         return gap >= 0 && gap <= 6
     }
 
     static func side(of frame: CGRect, relativeTo control: CGRect) -> Side? {
-        guard frame.width > 0, frame.height > 0, control.width > 0,
-              abs(frame.midY - control.midY) < min(frame.height, control.height) / 2,
-              frame.minX != control.minX else { return nil }
+        guard
+            frame.width > 0,
+            frame.height > 0,
+            control.width > 0,
+            abs(frame.midY - control.midY) < min(frame.height, control.height) / 2,
+            frame.minX != control.minX
+        else {
+            return nil
+        }
         // Hosted hit areas may overlap at their edges after a valid drop.
         // Left-to-right order is determined by origins, not touching edges.
         return frame.minX < control.minX ? .left : .right
@@ -74,8 +85,12 @@ enum MacOS27NativeBoundary {
     static func isImmediatelyBefore<Item: Equatable>(
         _ boundary: Item, _ control: Item, in order: [Item]
     ) -> Bool {
-        guard let boundaryIndex = order.firstIndex(of: boundary),
-              let controlIndex = order.firstIndex(of: control) else { return false }
+        guard
+            let boundaryIndex = order.firstIndex(of: boundary),
+            let controlIndex = order.firstIndex(of: control)
+        else {
+            return false
+        }
         return boundaryIndex + 1 == controlIndex
     }
 }

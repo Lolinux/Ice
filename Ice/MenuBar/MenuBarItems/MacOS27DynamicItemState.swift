@@ -49,8 +49,10 @@ struct MacOS27RuntimeItemRegistry<Element> {
             entries[index].lastSeen = now
             return entries[index].identity
         }
-        if entries.count >= capacity,
-           let oldest = entries.indices.min(by: { entries[$0].lastSeen < entries[$1].lastSeen }) {
+        if
+            entries.count >= capacity,
+            let oldest = entries.indices.min(by: { entries[$0].lastSeen < entries[$1].lastSeen })
+        {
             entries.remove(at: oldest)
         }
         let identity = "\(MacOS27RuntimeItemIdentity.prefix)\(session).\(nextIdentity)"
