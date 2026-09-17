@@ -225,8 +225,19 @@ final class IceBarPanel: NSPanel {
         if #available(macOS 27.0, *), outsideClickMonitor == nil {
             outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
                 matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
-            ) { [weak self] _ in
+            ) { [weak self] event in
                 guard let self, isVisible, !frame.contains(NSEvent.mouseLocation) else {
+                    return
+                }
+                // MenuBarAgent receives clicks on Ice's own button. Leave those
+                // to the button's action, which closes the Ice Bar; closing it
+                // here would make that action open it again.
+                if
+                    let location = event.cgEvent?.location ?? MouseHelpers.locationCoreGraphics,
+                    let iceBounds = MacOS27MenuBarItemProvider.ownMenuBarItems()
+                        .first(matching: .visibleControlItem)?.bounds,
+                    iceBounds.insetBy(dx: -2, dy: -2).contains(location)
+                {
                     return
                 }
                 hide()
@@ -369,7 +380,47 @@ private struct IceBarContentView: View {
         configuration.current.hasShadow ? 0.5 : 0.33
     }
 
+    /// The layer drawn between the Liquid Glass background and the items.
+    ///
+    /// Darkness chooses its shade, from white to black, and transparency
+    /// chooses how much of the glass it covers: fully transparent leaves the
+    /// bare glass, and opaque leaves a solid bar in that shade.
+    private var glassTintFill: Color {
+        let settings = appState.settings.general
+        return Color(white: 1 - settings.iceBarGlassDarkness)
+            .opacity(1 - settings.iceBarBackgroundTransparency)
+    }
+
     var body: some View {
+        if #available(macOS 26.0, *) {
+            glassBody
+        } else {
+            menuBarStyleBody
+        }
+    }
+
+    /// A dark Liquid Glass bar. Monochrome glyphs are templates, so they draw
+    /// in the white foreground style.
+    @available(macOS 26.0, *)
+    private var glassBody: some View {
+        content
+            .frame(height: contentHeight)
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, verticalPadding)
+            .foregroundStyle(.white)
+            .clipShape(clipShape)
+            .background {
+                clipShape.fill(glassTintFill)
+            }
+            .glassEffect(.regular, in: clipShape)
+            .environment(\.colorScheme, .dark)
+            .padding(5)
+            .frame(maxWidth: screen.frame.width)
+            .fixedSize()
+            .onFrameChange(update: $frame)
+    }
+
+    private var menuBarStyleBody: some View {
         ZStack {
             content
                 .frame(height: contentHeight)
@@ -510,16 +561,24 @@ private struct IceBarItemView: View {
     }
 
     private var image: NSImage? {
-        if let cachedImage = imageCache.images[item.tag] {
-            if #available(macOS 27.0, *) {
-                return IceBarGlyphImages.image(for: cachedImage, tag: item.tag)
-            }
-            return cachedImage.nsImage
-        }
         if #available(macOS 27.0, *) {
+            if
+                let cachedImage = imageCache.images[item.tag],
+                let glyph = IceBarGlyphImages.image(for: cachedImage, tag: item.tag)
+            {
+                return glyph
+            }
+            let items = itemManager.itemCache.managedItems
+            let key = MacOS27SavedItemImages.key(for: item, among: items)
+            if
+                let savedImage = MacOS27SavedItemImages.image(forKey: key),
+                let glyph = IceBarGlyphImages.image(for: savedImage, tag: item.tag)
+            {
+                return glyph
+            }
             return applicationIcon
         }
-        return nil
+        return imageCache.images[item.tag]?.nsImage
     }
 
     /// The icon of the app that owns the item, sized like a menu bar item.
@@ -575,30 +634,28 @@ private struct IceBarItemView: View {
 private enum IceBarGlyphImages {
     private static let cache = NSCache<AnyObject, NSImage>()
 
-    static func image(for capturedImage: MenuBarItemImageCache.CapturedImage, tag: MenuBarItemTag) -> NSImage {
+    /// Returns the glyph for a capture, or `nil` when the menu bar background
+    /// can't be separated from it. A raw crop is never returned: it would show
+    /// a rectangle of wallpaper around the glyph.
+    static func image(for capturedImage: MenuBarItemImageCache.CapturedImage, tag: MenuBarItemTag) -> NSImage? {
         let key = capturedImage.cgImage as AnyObject
         if let cached = cache.object(forKey: key) {
             return cached
         }
-        let image: NSImage
         let glyph = MenuBarGlyphImage.make(from: capturedImage.cgImage)
-        let trimmed = glyph.flatMap { trimmedToVisiblePixels($0.image) }
-        if let glyph, let trimmed {
-            image = centeredImage(trimmed, scale: capturedImage.scale)
-            image.isTemplate = glyph.isTemplate
-        } else {
-            image = capturedImage.nsImage
+        guard let glyph, let trimmed = trimmedToVisiblePixels(glyph.image) else {
+            if MacOS27GlyphDebug.isEnabled {
+                MacOS27GlyphDebug.log("Ice Bar \(tag): no glyph extracted from \(capturedImage.cgImage.width)x\(capturedImage.cgImage.height)")
+            }
+            return nil
         }
+        let image = centeredImage(trimmed, scale: capturedImage.scale)
+        image.isTemplate = glyph.isTemplate
         if MacOS27GlyphDebug.isEnabled {
-            if let glyph {
-                MacOS27GlyphDebug.write(glyph.image, name: "\(tag)-glyph")
-            }
-            if let trimmed {
-                MacOS27GlyphDebug.write(trimmed, name: "\(tag)-trimmed")
-            }
+            MacOS27GlyphDebug.write(glyph.image, name: "\(tag)-glyph")
+            MacOS27GlyphDebug.write(trimmed, name: "\(tag)-trimmed")
             let captureSize = "\(capturedImage.cgImage.width)x\(capturedImage.cgImage.height)"
-            let trimmedSize = trimmed.map { "\($0.width)x\($0.height)" } ?? "none"
-            MacOS27GlyphDebug.log("Ice Bar \(tag): capture \(captureSize) at \(capturedImage.scale)x, extracted \(glyph != nil) template \(glyph?.isTemplate ?? false), trimmed \(trimmedSize)")
+            MacOS27GlyphDebug.log("Ice Bar \(tag): capture \(captureSize) at \(capturedImage.scale)x, template \(glyph.isTemplate), trimmed \(trimmed.width)x\(trimmed.height)")
         }
         cache.setObject(image, forKey: key)
         return image

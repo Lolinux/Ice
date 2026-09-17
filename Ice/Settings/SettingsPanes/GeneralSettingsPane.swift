@@ -179,7 +179,12 @@ struct GeneralSettingsPane: View {
         useIceBar
         if settings.useIceBar {
             iceBarLocationPicker
-            iceBarBackgroundOpacitySlider
+            if #available(macOS 26.0, *) {
+                iceBarGlassDarknessSlider
+                iceBarBackgroundTransparencySlider
+            } else {
+                iceBarBackgroundOpacitySlider
+            }
         }
     }
 
@@ -202,6 +207,36 @@ struct GeneralSettingsPane: View {
             Text("Background opacity")
         }
         .annotation("How opaque the Ice Bar's background is. Items stay fully visible.")
+    }
+
+    @ViewBuilder
+    private var iceBarGlassDarknessSlider: some View {
+        LabeledContent {
+            IceSlider(
+                LocalizedStringKey("\(Int((settings.iceBarGlassDarkness * 100).rounded()))%"),
+                value: $settings.iceBarGlassDarkness,
+                in: 0...1,
+                step: 0.05
+            )
+        } label: {
+            Text("Darkness")
+        }
+        .annotation("The shade over the Ice Bar's glass, from white to black.")
+    }
+
+    @ViewBuilder
+    private var iceBarBackgroundTransparencySlider: some View {
+        LabeledContent {
+            IceSlider(
+                LocalizedStringKey("\(Int((settings.iceBarBackgroundTransparency * 100).rounded()))%"),
+                value: $settings.iceBarBackgroundTransparency,
+                in: 0...1,
+                step: 0.05
+            )
+        } label: {
+            Text("Transparency")
+        }
+        .annotation("How much of the glass the shade covers. 100% is bare Liquid Glass; 0% is solid.")
     }
 
     @ViewBuilder

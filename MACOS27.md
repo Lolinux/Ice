@@ -14,8 +14,9 @@ with additional hardening. Every macOS 27 path is gated on
 ## What works on macOS 27
 
 - Hiding and showing the Hidden section with Ice's button or a hotkey.
-- The Ice Bar: clicking Ice's button shows the hidden items in a bar below
-  it, with an adjustable background opacity.
+- The Ice Bar: clicking Ice's button shows the hidden items in a bar below it.
+  On macOS 26 and later it is drawn with Liquid Glass, with Darkness and
+  Transparency settings.
 - The Menu Bar Layout editor: item thumbnails and moving items between sections.
 - Menu bar appearance settings.
 - Native input for every other item. The clock still opens Notification Center.
@@ -26,10 +27,10 @@ with additional hardening. Every macOS 27 path is gated on
   app-menu hiding are disabled on macOS 27.
 - Without the Ice Bar, hidden items move into Apple's native overflow (the «
   button), so they are still reachable from there.
-- Clicking an item in the Ice Bar briefly reveals the hidden items in the menu
-  bar, which reflows the bar once.
-- Items that macOS keeps in its own overflow aren't drawn anywhere, so the Ice
-  Bar shows their app's icon, and clicking one opens the system overflow.
+- Items that macOS keeps in its own overflow aren't drawn anywhere, so they can
+  only be photographed while the menu bar has room for them. Until then the Ice
+  Bar shows their app's icon. macOS overflows the group as a whole: it draws
+  none of those items unless all of them fit.
 - Clock, Control Center and other items hosted by `MenuBarAgent` can't be
   dragged from the Layout editor. You can still Command-drag them yourself.
 - Opening the Layout editor shows every item until you leave it.
@@ -38,9 +39,14 @@ with additional hardening. Every macOS 27 path is gated on
 
 **Enumeration.** Items are read through Accessibility from each running app's
 extras menu bar. Items without a stable identifier are tracked by process-local
-AX equality. MenuBarAgent's overflow button is excluded, and an item whose frame
-overlaps that button or another item is treated as not drawn: items in the
-system overflow report stale frames stacked on the button.
+AX equality. MenuBarAgent's overflow button is excluded.
+
+**Geometry.** An app's own extras menu bar keeps reporting the frame its item
+had before macOS moved it, so items that leave the system overflow still look
+stacked on its button. Positions therefore come from MenuBarAgent's own
+accessibility tree: one window per display, one container per item, each
+nesting the owning app's element. An item whose container overlaps the overflow
+button or another container is treated as not drawn.
 
 **Hiding.** Ice owns a blank status item immediately to the left of its visible
 button. To hide, Ice widens it so `MenuBarAgent`'s own overflow takes everything
@@ -56,14 +62,26 @@ MenuBarAgent's unidentified host element there, so the drag is accepted only whe
 that element's frame matches Ice's own boundary frame.
 
 **Ice Bar.** In Ice Bar mode the hidden items stay concealed, and only the bar
-opens and closes. Clicking an item reveals the hidden items, clicks the item
-where MenuBarAgent draws it, and conceals them again once its menu closes.
+opens and closes. Clicking an item presses it through Accessibility, so nothing
+returns to the menu bar. Only an item that answers neither `AXPress` nor
+`AXShowMenu` falls back to revealing the items and clicking where MenuBarAgent
+draws them.
 
 **Thumbnails.** Other apps' status item images aren't available through any
-API. One Retina screenshot of the menu bar strip is cropped using fresh AX frames,
-and the glyph is separated from the bar's background. Concealed items aren't
-drawn, so Ice Bar images are captured just before concealing and whenever items
-are revealed. Screen Recording is only needed for these images.
+API. One Retina screenshot of the menu bar strip is cropped using each item's
+container frame. The menu bar is translucent, so the background is estimated at
+the top and bottom of every column and blended between them; a glyph counts as
+colored only when its own pixels carry chroma, and anything too faint, or not
+connected to a solid part of the glyph, is dropped. A raw crop is never shown.
+
+Concealed items aren't drawn, so pictures are taken just before concealing,
+whenever items are revealed, and by a photo pass that runs once per launch: it
+gives the spacer's width back in steps so macOS draws the concealed items long
+enough to photograph them, then restores it. Pictures are saved under
+`~/Library/Caches/com.jordanbaird.Ice/IceBarImages` and reused after a relaunch,
+so a crowded menu bar only has to make room once. The `IceBarNoPhotoApps`
+default lists bundle identifiers whose items change too often to photograph.
+Screen Recording is only needed for these images.
 
 ## Hardening in this branch
 

@@ -37,6 +37,14 @@ final class GeneralSettings: ObservableObject {
     /// The opacity of the Ice Bar's background. Items stay fully opaque.
     @Published var iceBarBackgroundOpacity: Double = 1
 
+    /// How dark the Ice Bar's Liquid Glass background is, on macOS 26 and later.
+    @Published var iceBarGlassDarkness: Double = 0.6
+
+    /// How see-through the Ice Bar's background is, on macOS 26 and later.
+    /// At 1 it is bare Liquid Glass; at 0 it is a solid bar in the shade that
+    /// ``iceBarGlassDarkness`` chooses.
+    @Published var iceBarBackgroundTransparency: Double = 0.4
+
     /// A Boolean value that indicates whether the hidden section
     /// should be shown when the mouse pointer clicks in an empty
     /// area of the menu bar.
@@ -95,6 +103,8 @@ final class GeneralSettings: ObservableObject {
         Defaults.ifPresent(key: .showOnScroll, assign: &showOnScroll)
         Defaults.ifPresent(key: .itemSpacingOffset, assign: &itemSpacingOffset)
         Defaults.ifPresent(key: .iceBarBackgroundOpacity, assign: &iceBarBackgroundOpacity)
+        Defaults.ifPresent(key: .iceBarGlassDarkness, assign: &iceBarGlassDarkness)
+        Defaults.ifPresent(key: .iceBarBackgroundTransparency, assign: &iceBarBackgroundTransparency)
         Defaults.ifPresent(key: .autoRehide, assign: &autoRehide)
         Defaults.ifPresent(key: .rehideInterval, assign: &rehideInterval)
 
@@ -175,6 +185,20 @@ final class GeneralSettings: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { opacity in
                 Defaults.set(opacity, forKey: .iceBarBackgroundOpacity)
+            }
+            .store(in: &c)
+
+        $iceBarGlassDarkness
+            .receive(on: DispatchQueue.main)
+            .sink { darkness in
+                Defaults.set(darkness, forKey: .iceBarGlassDarkness)
+            }
+            .store(in: &c)
+
+        $iceBarBackgroundTransparency
+            .receive(on: DispatchQueue.main)
+            .sink { transparency in
+                Defaults.set(transparency, forKey: .iceBarBackgroundTransparency)
             }
             .store(in: &c)
 

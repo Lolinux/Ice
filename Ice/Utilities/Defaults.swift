@@ -144,6 +144,8 @@ extension Defaults {
         case useIceBar = "UseIceBar"
         case iceBarLocation = "IceBarLocation"
         case iceBarBackgroundOpacity = "IceBarBackgroundOpacity"
+        case iceBarGlassDarkness = "IceBarGlassDarkness"
+        case iceBarBackgroundTransparency = "IceBarBackgroundTransparency"
         case showOnClick = "ShowOnClick"
         case showOnHover = "ShowOnHover"
         case showOnScroll = "ShowOnScroll"
