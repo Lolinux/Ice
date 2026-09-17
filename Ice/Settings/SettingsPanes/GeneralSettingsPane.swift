@@ -212,11 +212,10 @@ struct GeneralSettingsPane: View {
     @ViewBuilder
     private var iceBarGlassDarknessSlider: some View {
         LabeledContent {
-            IceSlider(
-                LocalizedStringKey("\(Int((settings.iceBarGlassDarkness * 100).rounded()))%"),
+            endLabeledSlider(
                 value: $settings.iceBarGlassDarkness,
-                in: 0...1,
-                step: 0.05
+                minimumSymbol: "circle",
+                maximumSymbol: "circle.fill"
             )
         } label: {
             Text("Darkness")
@@ -224,14 +223,28 @@ struct GeneralSettingsPane: View {
         .annotation("The shade over the Ice Bar's glass, from white to black.")
     }
 
+    /// A slider in the style of System Settings: no value shown, and a symbol
+    /// at each end for what the ends mean.
+    @ViewBuilder
+    private func endLabeledSlider(
+        value: Binding<Double>,
+        minimumSymbol: String,
+        maximumSymbol: String
+    ) -> some View {
+        EndLabeledSlider(
+            value: value,
+            minimumSymbol: minimumSymbol,
+            maximumSymbol: maximumSymbol
+        )
+    }
+
     @ViewBuilder
     private var iceBarBackgroundTransparencySlider: some View {
         LabeledContent {
-            IceSlider(
-                LocalizedStringKey("\(Int((settings.iceBarBackgroundTransparency * 100).rounded()))%"),
+            endLabeledSlider(
                 value: $settings.iceBarBackgroundTransparency,
-                in: 0...1,
-                step: 0.05
+                minimumSymbol: "square.fill",
+                maximumSymbol: "square.dashed"
             )
         } label: {
             Text("Transparency")
@@ -387,5 +400,53 @@ struct GeneralSettingsPane: View {
             }
             isApplyingItemSpacingOffset = false
         }
+    }
+}
+
+// MARK: - EndLabeledSlider
+
+/// A slider that tracks the pointer in local state and passes the value on at
+/// a steady rate.
+///
+/// Writing every intermediate value straight to the settings republishes the
+/// whole pane and saves a default on each one, which makes the knob catch.
+private struct EndLabeledSlider: View {
+    @Binding var value: Double
+
+    let minimumSymbol: String
+    let maximumSymbol: String
+
+    @State private var draft: Double?
+
+    private var sliderValue: Binding<Double> {
+        Binding {
+            draft ?? value
+        } set: { newValue in
+            // Only the knob moves during a drag. Writing the setting here
+            // republishes every row of the settings pane, and rebuilding the
+            // icon menus and the launch-at-login toggle is what makes the
+            // knob catch. The value is committed when the drag ends.
+            draft = newValue
+        }
+    }
+
+    var body: some View {
+        Slider(
+            value: sliderValue,
+            in: 0...1,
+            onEditingChanged: { isEditing in
+                guard !isEditing else {
+                    return
+                }
+                if let draft {
+                    value = draft
+                }
+                draft = nil
+            },
+            minimumValueLabel: Image(systemName: minimumSymbol).foregroundStyle(.secondary),
+            maximumValueLabel: Image(systemName: maximumSymbol).foregroundStyle(.secondary),
+            label: { EmptyView() }
+        )
+        .controlSize(.small)
     }
 }

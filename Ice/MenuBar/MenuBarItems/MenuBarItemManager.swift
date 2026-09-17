@@ -93,9 +93,23 @@ final class MenuBarItemManager: ObservableObject {
             })
             .discardMerge(Timer.publish(every: 5, on: .main, in: .default).autoconnect())
             .debounce(for: 1, scheduler: DispatchQueue.main)
-            .sink { [weak self] in
+            .sink { [weak self, weak appState] in
                 guard let self else {
                     return
+                }
+                if #available(macOS 27.0, *), let appState {
+                    // A complete accessibility walk blocks Ice's own interface
+                    // for as long as the slowest app takes to answer. Nothing
+                    // outside Layout and the Ice Bar shows the items, so don't
+                    // pay that while the user is in another settings pane.
+                    let navigation = appState.navigationState
+                    if
+                        navigation.isSettingsPresented,
+                        navigation.settingsNavigationIdentifier != .menuBarLayout,
+                        !navigation.isIceBarPresented
+                    {
+                        return
+                    }
                 }
                 Task {
                     await self.cacheItemsIfNeeded()

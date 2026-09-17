@@ -188,15 +188,16 @@ final class GeneralSettings: ObservableObject {
             }
             .store(in: &c)
 
+        // Saving on every intermediate value of a drag is wasted work.
         $iceBarGlassDarkness
-            .receive(on: DispatchQueue.main)
+            .throttle(for: 0.2, scheduler: DispatchQueue.main, latest: true)
             .sink { darkness in
                 Defaults.set(darkness, forKey: .iceBarGlassDarkness)
             }
             .store(in: &c)
 
         $iceBarBackgroundTransparency
-            .receive(on: DispatchQueue.main)
+            .throttle(for: 0.2, scheduler: DispatchQueue.main, latest: true)
             .sink { transparency in
                 Defaults.set(transparency, forKey: .iceBarBackgroundTransparency)
             }

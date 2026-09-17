@@ -56,6 +56,9 @@ final class MenuBarManager: ObservableObject {
     private var nativeConcealmentTask: Task<Void, Never>?
     private var nativeConcealmentCheckTask: Task<Void, Never>?
 
+    /// The off-main-thread menu bar color sample.
+    private var averageColorTask: Task<Void, Never>?
+
     /// The one-per-launch pass that photographs concealed items.
     private var glyphPhotoPassTask: Task<Void, Never>?
     private var hasRunGlyphPhotoPass = false
@@ -638,6 +641,10 @@ final class MenuBarManager: ObservableObject {
 
     /// Updates the ``averageColorInfo`` property with the current average color
     /// of the menu bar.
+    ///
+    /// The window list and the capture take long enough to be felt in Ice's
+    /// own interface, and this runs on a timer while the settings window is
+    /// open, so the work happens off the main thread.
     func updateAverageColorInfo() {
         guard
             let settingsWindow,
@@ -646,32 +653,31 @@ final class MenuBarManager: ObservableObject {
         else {
             return
         }
-
-        let windows = WindowInfo.createWindows(option: .onScreen)
         let displayID = screen.displayID
-
-        guard
-            let menuBarWindow = WindowInfo.menuBarWindow(from: windows, for: displayID),
-            let wallpaperWindow = WindowInfo.wallpaperWindow(from: windows, for: displayID)
-        else {
-            return
-        }
-
-        guard
-            let image = ScreenCapture.captureWindows(
-                with: [menuBarWindow.windowID, wallpaperWindow.windowID],
-                screenBounds: withMutableCopy(of: wallpaperWindow.bounds) { $0.size.height = 1 },
-                option: .nominalResolution
-            ),
-            let color = image.averageColor(option: .ignoreAlpha)
-        else {
-            return
-        }
-
-        let info = MenuBarAverageColorInfo(color: color, source: .menuBarWindow)
-
-        if averageColorInfo != info {
-            averageColorInfo = info
+        averageColorTask?.cancel()
+        averageColorTask = Task { [weak self] in
+            let info = await Task.detached(priority: .utility) {
+                let windows = WindowInfo.createWindows(option: .onScreen)
+                guard
+                    let menuBarWindow = WindowInfo.menuBarWindow(from: windows, for: displayID),
+                    let wallpaperWindow = WindowInfo.wallpaperWindow(from: windows, for: displayID),
+                    let image = ScreenCapture.captureWindows(
+                        with: [menuBarWindow.windowID, wallpaperWindow.windowID],
+                        screenBounds: withMutableCopy(of: wallpaperWindow.bounds) { $0.size.height = 1 },
+                        option: .nominalResolution
+                    ),
+                    let color = image.averageColor(option: .ignoreAlpha)
+                else {
+                    return nil as MenuBarAverageColorInfo?
+                }
+                return MenuBarAverageColorInfo(color: color, source: .menuBarWindow)
+            }.value
+            guard let self, let info, !Task.isCancelled else {
+                return
+            }
+            if averageColorInfo != info {
+                averageColorInfo = info
+            }
         }
     }
 
