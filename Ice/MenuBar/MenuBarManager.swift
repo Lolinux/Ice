@@ -373,6 +373,12 @@ final class MenuBarManager: ObservableObject {
 
         let remaining = itemsNeedingPictures().count
         logger.notice("Photo pass finished with \(remaining, privacy: .public) items still missing a picture")
+        if iceBarRevealDepth > 0 || macOS27Controller.isLayoutEditing {
+            // A live Ice Bar or Layout may have opened during the last await.
+            // Do not let an older photo pass conceal their capture sources.
+            syncNativeVisibility()
+            return
+        }
         nativeHiding.setHidden(
             true,
             section: .hidden,
@@ -483,6 +489,7 @@ final class MenuBarManager: ObservableObject {
     @available(macOS 27.0, *)
     func beginIceBarReveal() {
         iceBarRevealDepth += 1
+        glyphPhotoPassTask?.cancel()
         syncNativeVisibility()
     }
 

@@ -4,8 +4,8 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DERIVED_DATA="${ICE_RELEASE_DERIVED_DATA_PATH:-$HOME/Library/Developer/Xcode/DerivedData/Ice-MacOS27-Release}"
 OUTPUT="${ICE_PACKAGE_OUTPUT:-$PROJECT_ROOT/build/release}"
-VERSION="0.12.0-macos27.1"
-BUILD_NUMBER=1330
+VERSION="0.12.0-macos27.2"
+BUILD_NUMBER=1331
 mkdir -p "$OUTPUT"
 
 xcodebuild -project "$PROJECT_ROOT/Ice.xcodeproj" -scheme Ice \

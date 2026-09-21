@@ -49,6 +49,9 @@ python3 Scripts/test-signing-continuity.py "$HOME/Applications/Ice 27.app"
   reveal native overflow, refresh all owners and capture images before hiding.
   Layout uses the same discovery path.
 - Resolve newly published boundaries live for moves into empty sections.
+- Keep native items drawn while Ice Bar is open, and refresh their exact images
+  on the existing three-second timer. Close cancels discovery and releases the
+  reveal; captures from a previous panel session cannot republish stale pixels.
 - Use persistent signing to preserve privacy grants across local rebuilds.
 - Anchor newly opened, movable Ice Bar popups under Ice's menu-bar button.
   Watch window notifications before opening and use immediate, bounded polling
@@ -78,6 +81,13 @@ items in this scenario; the recovery must run before Ice conceals them again.
 No new privacy permission or changed section setting should be needed.
 
 ## Limitations and usage
+
+Live-value regression check: keep Settings out of Layout, open Ice Bar and
+observe CPU, temperature, network, fan and memory across several refreshes.
+Native items stay expanded while the panel is open and hide when it closes.
+Repeat after reopening and click a State item to verify popup placement.
+Local checks observed CPU 27% to 19%, fan 2422 to 2394 RPM, and later 2413 to
+2409 RPM. An older startup photo pass must not override the current reveal.
 
 See [Chinese release notes](RELEASE-NOTES.zh-CN.md). Startup discovery may briefly
 expand the native menu bar to refresh anonymous items. Multiple displays and older

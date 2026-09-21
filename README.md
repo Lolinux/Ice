@@ -21,6 +21,7 @@ Additional changes in this fork, dated **2026-09-20–2026-09-21**:
 - **拖动排列**：操作前展开系统收缩区域并验证坐标；向空分组移动时读取最新边界。
 - **弹窗定位**：从 Ice Bar 打开的、支持移动的第三方面板对齐菜单栏 Ice 按钮下方。
 - **退出重开恢复**：启动时先读取系统收缩区域、恢复图标分组和图片，再隐藏菜单栏，无需手动进入 Menu Bar Layout。
+- **动态数值刷新**：展开 Ice Bar 时原生图标也展开，每约 3 秒读取新的 CPU、温度、风扇等数值；收起后恢复隐藏。
 - **本地构建签名**：复用本机开发签名，减少反复构建引起的隐私授权失效；禁用本地版本的上游自动更新。
 
 The fixes use live hosted geometry, validate native drag targets, position
@@ -29,7 +30,7 @@ them at launch. Local builds reuse a persistent signing identity.
 
 ## 下载 / Download
 
-[**Ice 27 · 0.12.0-macos27.1（预发布）**](https://github.com/Lolinux/Ice/releases/tag/v0.12.0-macos27.1)
+[**Ice 27 · 0.12.0-macos27.2（预发布）**](https://github.com/Lolinux/Ice/releases/tag/v0.12.0-macos27.2)
 
 提供 DMG、ZIP、对应源码和 SHA-256 校验文件，仅面向 Apple Silicon / macOS 27。
 安装包使用自签名开发证书，**没有 Apple Developer ID 签名或公证**，下载后可能被系统拦截。
@@ -54,7 +55,7 @@ bash Scripts/package-release.sh
 后续构建复用。签名材料不在仓库内，也不随安装包分发。不同机器上的签名身份不同。
 
 The first build creates a local signing identity; later builds on that Mac
-reuse it. Generated apps are **not Developer ID notarized**. The [experimental release](https://github.com/Lolinux/Ice/releases/tag/v0.12.0-macos27.1)
+reuse it. Generated apps are **not Developer ID notarized**. The [experimental release](https://github.com/Lolinux/Ice/releases/tag/v0.12.0-macos27.2)
 provides Apple Silicon binaries and matching source. Downloaded builds may be
 blocked by Gatekeeper and have not been validated on a clean Mac. Existing
 privacy permissions are ultimately managed by macOS.
