@@ -66,7 +66,7 @@ enum MacOS27MenuBarItemProvider {
     /// A right click prefers `AXShowMenu`; a left click prefers `AXPress`.
     /// Returns `false` if the element can't be found or has neither action.
     @MainActor
-    static func pressItem(_ item: MenuBarItem, showingMenu: Bool) -> Bool {
+    static func pressItem(_ item: MenuBarItem, showingMenu: Bool, actionTimeout: Float = 0.3) -> Bool {
         let frames = NSScreen.screens.map { screen in
             let display = CGDisplayBounds(screen.displayID)
             return CGRect(x: display.minX, y: display.minY, width: display.width, height: maxItemHeight)
@@ -113,7 +113,7 @@ enum MacOS27MenuBarItemProvider {
             }
             // A press can open a menu that tracks before the owner replies.
             // Don't hold the main thread for that; the action is already sent.
-            AXUIElementSetMessagingTimeout(element.element, 0.3)
+            AXUIElementSetMessagingTimeout(element.element, actionTimeout)
             do {
                 try element.performAction(action)
             } catch AXError.cannotComplete {
@@ -237,10 +237,40 @@ enum MacOS27MenuBarItemProvider {
     /// overflow still look stacked there. MenuBarAgent draws the bar, and its
     /// per-item containers carry the positions it actually used.
     struct AgentGeometry {
-        /// Container frames per owning process, ordered left to right.
-        var framesByOwner = [pid_t: [CGRect]]()
+        /// Identified container frames per owning process.
+        var containersByOwner = [pid_t: [MacOS27AgentGeometry.Container]]()
         /// Frames of MenuBarAgent's overflow buttons.
         var overflowFrames = [CGRect]()
+    }
+
+    /// Used when the user opens Layout or requests a move in native overflow.
+    /// Identify the system button structurally, without matching localized text.
+    @MainActor
+    static func nativeOverflowButtonFrame(on displayID: CGDirectDisplayID) -> CGRect? {
+        let display = CGDisplayBounds(displayID)
+        let strip = CGRect(x: display.minX, y: display.minY, width: display.width, height: maxItemHeight)
+        var buttons = [UIElement]()
+        for agent in NSWorkspace.shared.runningApplications where agent.bundleIdentifier == "com.apple.MenuBarAgent" {
+            guard let application = AXHelpers.application(for: agent) else { continue }
+            let windows: [UIElement] = (try? application.arrayAttribute(.windows)) ?? []
+            for window in windows {
+                for child in AXHelpers.children(for: window) {
+                    guard AXHelpers.role(for: child) == .button,
+                          AXHelpers.pid(for: child) == agent.processIdentifier,
+                          let frame = AXHelpers.frame(for: child), strip.contains(frame)
+                    else { continue }
+                    buttons.append(child)
+                }
+            }
+        }
+        guard buttons.count == 1, let button = buttons.first,
+              let frame = AXHelpers.frame(for: button)
+        else { return nil }
+        // A missing owner is not evidence that the overflow is closed. Never
+        // toggle an already expanded bar merely because a child is republishing.
+        let geometry = agentGeometry()
+        guard geometry.containersByOwner.values.joined().contains(where: { $0.frame.intersects(frame) }) else { return nil }
+        return frame
     }
 
     static func agentGeometry() -> AgentGeometry {
@@ -260,16 +290,20 @@ enum MacOS27MenuBarItemProvider {
                         continue
                     }
                     // The container nests the owning app's own element.
-                    let owner = AXHelpers.children(for: child)
-                        .compactMap { AXHelpers.pid(for: $0) }
-                        .first { $0 != agent.processIdentifier } ?? childPID
+                    let hosted = AXHelpers.children(for: child)
+                    let ownerElement = hosted.first {
+                        guard let pid = AXHelpers.pid(for: $0) else { return false }
+                        return pid != agent.processIdentifier
+                    }
+                    let owner = ownerElement.flatMap { AXHelpers.pid(for: $0) } ?? childPID
                     guard let owner else { continue }
-                    geometry.framesByOwner[owner, default: []].append(frame)
+                    let identifier = ownerElement.flatMap { nonEmpty(AXHelpers.identifier(for: $0)) }
+                        ?? nonEmpty(AXHelpers.identifier(for: child))
+                    geometry.containersByOwner[owner, default: []].append(
+                        .init(identifier: identifier, frame: frame)
+                    )
                 }
             }
-        }
-        for (owner, frames) in geometry.framesByOwner {
-            geometry.framesByOwner[owner] = frames.sorted { $0.minX < $1.minX }
         }
         return geometry
     }
@@ -278,27 +312,27 @@ enum MacOS27MenuBarItemProvider {
     /// marks the items it isn't drawing at all.
     private static func applyingAgentGeometry(to items: [MenuBarItem]) -> [MenuBarItem] {
         let geometry = agentGeometry()
-        guard !geometry.framesByOwner.isEmpty else { return items }
 
-        // Match an owner's items to its containers left to right.
-        var nextIndexByOwner = [pid_t: Int]()
+        // Prefer hosted identifiers: rank alone swaps Ice's button and its
+        // boundary while the owner's AX frames still have the pre-drag order.
         var frameByTag = [MenuBarItemTag: CGRect]()
-        for item in items.sorted(by: { $0.bounds.minX < $1.bounds.minX }) {
-            let owner = item.sourcePID ?? item.ownerPID
-            guard let frames = geometry.framesByOwner[owner] else { continue }
-            let index = nextIndexByOwner[owner, default: 0]
-            guard frames.indices.contains(index) else { continue }
-            nextIndexByOwner[owner] = index + 1
-            frameByTag[item.tag] = frames[index]
-        }
-        let allFrames = Array(frameByTag.values)
-
-        return items.map { item in
-            guard let frame = frameByTag[item.tag] else { return item }
-            let overlapsOverflow = geometry.overflowFrames.contains { $0.intersects(frame) }
-            let overlapsOther = allFrames.contains { other in
-                other != frame && other.intersection(frame).width > 6
+        let byOwner = Dictionary(grouping: items) { $0.sourcePID ?? $0.ownerPID }
+        for (owner, ownerItems) in byOwner {
+            guard let containers = geometry.containersByOwner[owner] else { continue }
+            let ordered = ownerItems.sorted { $0.bounds.minX < $1.bounds.minX }
+            let matches = MacOS27AgentGeometry.match(identifiers: ordered.map { $0.tag.title }, containers: containers)
+            for (index, frame) in matches {
+                frameByTag[ordered[index].tag] = frame
             }
+        }
+        return items.map { item in
+            let matchedFrame = frameByTag[item.tag]
+            let frame = matchedFrame ?? item.bounds
+            let isDrawn = MacOS27AgentGeometry.isDrawn(
+                frame: matchedFrame,
+                otherFrames: frameByTag.filter { $0.key != item.tag }.map(\.value),
+                overflowFrames: geometry.overflowFrames
+            )
             // Containers are the full height of the menu bar; keep the item's
             // own height, which is what a capture should crop.
             let height = min(frame.height, max(item.bounds.height, 22))
@@ -316,7 +350,7 @@ enum MacOS27MenuBarItemProvider {
                 title: item.title,
                 accessibilityHelp: item.accessibilityHelp,
                 accessibilityValue: item.accessibilityValue,
-                isOnScreen: !overlapsOverflow && !overlapsOther
+                isOnScreen: isDrawn
             )
         }
     }

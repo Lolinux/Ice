@@ -99,11 +99,14 @@ final class MacOS27MenuBarController {
         seedUnassignedItems(liveItems, using: sourceItems)
         if
             !isReorderInProgress,
-            let iceItem = sourceItems.first(matching: .visibleControlItem)
+            let iceItem = sourceItems.first(matching: .visibleControlItem),
+            iceItem.isOnScreen
         {
-            let alwaysBoundary = sourceItems.first(matching: .nativeBoundary(for: .alwaysHidden))
+            let alwaysBoundary = sourceItems.filter(\.isOnScreen).first(matching: .nativeBoundary(for: .alwaysHidden))
             // The native bar, including manual Command-drags, is authoritative.
-            for item in liveItems {
+            // Native overflow retains coordinates even when Ice itself is
+            // concealed. Those coordinates cannot establish section membership.
+            for item in liveItems where item.isOnScreen {
                 let identifier = item.tag.persistentIdentifier
                 guard let side = MacOS27NativeBoundary.side(of: item.bounds, relativeTo: iceItem.bounds) else {
                     continue // Off-bar overflow frames are not native order evidence.
@@ -555,10 +558,11 @@ final class MacOS27MenuBarController {
         _ items: [MenuBarItem],
         using sourceItems: [MenuBarItem]
     ) {
-        let hiddenDivider = sourceItems.first(matching: .visibleControlItem)
-            ?? sourceItems.first(matching: .hiddenControlItem)
-        let alwaysHiddenDivider = sourceItems.first(matching: .nativeBoundary(for: .alwaysHidden))
-            ?? sourceItems.first(matching: .alwaysHiddenControlItem)
+        let drawnItems = sourceItems.filter(\.isOnScreen)
+        let hiddenDivider = drawnItems.first(matching: .visibleControlItem)
+            ?? drawnItems.first(matching: .hiddenControlItem)
+        let alwaysHiddenDivider = drawnItems.first(matching: .nativeBoundary(for: .alwaysHidden))
+            ?? drawnItems.first(matching: .alwaysHiddenControlItem)
 
         var seededAnyItem = false
         for item in items {
@@ -566,7 +570,9 @@ final class MacOS27MenuBarController {
             guard layout.assignments[identifier] == nil else { continue }
 
             let section: MenuBarSection.Name
-            if let hiddenDivider, item.bounds.minX >= hiddenDivider.bounds.maxX {
+            if !item.isOnScreen {
+                section = .visible // Unknown until the native overflow is expanded.
+            } else if let hiddenDivider, item.bounds.minX >= hiddenDivider.bounds.maxX {
                 section = .visible
             } else if
                 let hiddenDivider,

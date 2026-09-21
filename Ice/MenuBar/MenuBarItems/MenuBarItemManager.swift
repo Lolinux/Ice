@@ -445,6 +445,13 @@ extension MenuBarItemManager {
             snapshot = await currentMacOS27ReorderSnapshot(appState: appState)
         }
         guard !Task.isCancelled else { return false }
+        let boundaryTags: Set<MenuBarItemTag> = [.visibleControlItem, .nativeBoundary(for: .hidden)]
+        if allowingDrag, snapshot.contains(where: { boundaryTags.contains($0.tag) && !$0.isOnScreen }) {
+            guard let revealed = await revealNativeMoveItems(boundaryTags, snapshot: snapshot, appState: appState) else {
+                return false
+            }
+            snapshot = revealed
+        }
         guard
             let ice = snapshot.first(matching: .visibleControlItem),
             let boundary = snapshot.first(matching: .nativeBoundary(for: .hidden))
@@ -1370,7 +1377,11 @@ extension MenuBarItemManager {
         }
         // Press the item through Accessibility where possible, so the hidden
         // items stay out of the menu bar. Reveal and click only as a fallback.
-        if MacOS27MenuBarItemProvider.pressItem(item, showingMenu: mouseButton == .right) {
+        let popupPositioner = MacOS27PopupPositioner(item: item)
+        // A tracking popup can delay the AX reply until it closes. Return
+        // promptly so its creation notification can position it immediately.
+        if MacOS27MenuBarItemProvider.pressItem(item, showingMenu: mouseButton == .right, actionTimeout: popupPositioner == nil ? 0.3 : 0.02) {
+            await popupPositioner?.positionNewPopup()
             return
         }
         let menuBarManager = appState.menuBarManager
@@ -1407,6 +1418,7 @@ extension MenuBarItemManager {
             return
         }
         logger.notice("Clicked \(item.logString, privacy: .public) at \(clickPoint.debugDescription, privacy: .public)")
+        await popupPositioner?.positionNewPopup()
 
         // The items are visible now, so refresh the Ice Bar's images.
         Task {
@@ -1619,8 +1631,67 @@ extension MenuBarItemManager {
         commandIsDown = false
     }
 
-    /// Layout sends a native drag, then observes the actual settled result.
-    /// Never rewrite preference guesses or freeze the system compositor.
+    /// An explicit visit to Layout reveals native overflow before deriving
+    /// membership. Process-local item identities cannot retain hidden sections
+    /// across restart until their actual order is visible again.
+    @available(macOS 27.0, *)
+    func revealNativeItemsForLayout() async {
+        guard let appState, appState.menuBarManager.macOS27Controller.isLayoutEditing else { return }
+        await revealNativeItemsForDiscovery()
+    }
+
+    /// Used both at launch and in Layout. Probe native overflow even when all
+    /// known items are drawn: a collapsed group can be absent from AX entirely.
+    @available(macOS 27.0, *)
+    func revealNativeItemsForDiscovery() async {
+        guard let appState else { return }
+        do { try await eventSemaphore.waitUnlessCancelled() } catch { return }
+        defer { eventSemaphore.signal() }
+        let snapshot = await currentMacOS27ReorderSnapshot(appState: appState)
+        let tags = Set(snapshot.filter { $0.canBeHidden }.map(\.tag)).union([.visibleControlItem])
+        _ = await revealNativeMoveItems(tags, snapshot: snapshot, appState: appState, discoveringOwners: true)
+        guard !Task.isCancelled else { return }
+        // Owners absent while collapsed won't be in the targeted snapshot.
+        await cacheItemsRegardless(ignoringRecentMovement: true, refreshingAllOwners: true)
+    }
+
+    /// Read fresh, drawn targets before sending native input.
+    @available(macOS 27.0, *)
+    private func revealNativeMoveItems(
+        _ tags: Set<MenuBarItemTag>, snapshot: [MenuBarItem], appState: AppState,
+        discoveringOwners: Bool = false
+    ) async -> [MenuBarItem]? {
+        func areDrawn(_ items: [MenuBarItem]) -> Bool {
+            tags.allSatisfy { tag in items.first(matching: tag)?.isOnScreen == true }
+        }
+        if !discoveringOwners, areDrawn(snapshot) { return snapshot }
+        // MenuBarAgent exposes a button but rejects AXPress on macOS 27.
+        // Use our normal click path for discovery or an explicit move, after two
+        // live reads agree on the unique system-owned overflow control.
+        guard let displayID = Bridging.getActiveMenuBarDisplayID(),
+              let overflow = MacOS27MenuBarItemProvider.nativeOverflowButtonFrame(on: displayID)
+        else { return nil }
+        do {
+            try await waitForUserToPauseInputForNativeDrag()
+            guard MacOS27MenuBarItemProvider.nativeOverflowButtonFrame(on: displayID) == overflow else { return nil }
+            try await postMacOS27Click(at: overflow.center, with: .left)
+        } catch {
+            logger.error("Could not reveal native drag targets: \(error, privacy: .public)")
+            return nil
+        }
+        var previous: [CGRect]?
+        for _ in 0 ..< 12 {
+            do { try await Task.sleep(for: .milliseconds(80)) } catch { return nil }
+            let fresh = await currentMacOS27ReorderSnapshot(appState: appState)
+            guard areDrawn(fresh) else { previous = nil; continue }
+            let frames = fresh.filter { tags.contains($0.tag) }.sorted { $0.bounds.minX < $1.bounds.minX }.map(\.bounds)
+            if frames == previous { return fresh }
+            previous = frames
+        }
+        logger.warning("Native overflow did not expose all requested items with stable geometry")
+        return nil
+    }
+
     @available(macOS 27.0, *)
     private func performMacOS27NativeMove(
         item: MenuBarItem,
@@ -1635,7 +1706,10 @@ extension MenuBarItemManager {
         } else {
             isOwnBoundaryAlignment = false
         }
-        guard appState.menuBarManager.macOS27Controller.isLayoutEditing || isOwnBoundaryAlignment else { return false }
+        guard appState.menuBarManager.macOS27Controller.isLayoutEditing || isOwnBoundaryAlignment else {
+            logger.notice("Ignoring native move outside Layout")
+            return false
+        }
         do {
             try await eventSemaphore.waitUnlessCancelled()
         } catch {
@@ -1645,10 +1719,15 @@ extension MenuBarItemManager {
 
         var snapshot = contextItems
         for _ in 0 ..< 2 {
+            guard let revealed = await revealNativeMoveItems(
+                [item.tag, destination.targetItem.tag], snapshot: snapshot, appState: appState
+            ) else { return false }
+            snapshot = revealed
             guard
                 !Task.isCancelled,
                 let liveItem = snapshot.first(matching: item.tag),
-                let liveTarget = snapshot.first(matching: destination.targetItem.tag)
+                let liveTarget = snapshot.first(matching: destination.targetItem.tag),
+                liveItem.isOnScreen, liveTarget.isOnScreen
             else {
                 return false
             }
@@ -1656,7 +1735,10 @@ extension MenuBarItemManager {
                 MacOS27NativeBoundary.canDrag(
                     from: liveItem.bounds, to: liveTarget.bounds, on: CGDisplayBounds($0.displayID)
                 )
-            }) else { return false }
+            }) else {
+                logger.notice("Invalid native drag geometry: \(liveItem.bounds.debugDescription, privacy: .public) to \(liveTarget.bounds.debugDescription, privacy: .public)")
+                return false
+            }
             if isOwnBoundaryAlignment {
                 let center = liveItem.bounds.center
                 let hitElement = AXHelpers.element(at: center)
@@ -1681,12 +1763,13 @@ extension MenuBarItemManager {
                     }
                     let ownBoundary = MacOS27MenuBarItemProvider.ownMenuBarItems().first(matching: liveItem.tag)
                     let overlappingItems = snapshot.filter {
-                        $0.tag != liveItem.tag && $0.bounds.insetBy(dx: -1, dy: 0).contains(center)
+                        $0.isOnScreen && $0.tag != liveItem.tag && $0.bounds.insetBy(dx: -1, dy: 0).contains(center)
                     }
                     guard
                         hitIdentifier == nil,
                         hitFrameMatches ?? true,
-                        ownBoundary?.bounds == liveItem.bounds,
+                        let ownBoundary,
+                        MacOS27AgentGeometry.contentMatchesContainer(content: ownBoundary.bounds, container: liveItem.bounds),
                         overlappingItems.isEmpty
                     else {
                         let ownDescription = ownBoundary?.bounds.debugDescription ?? "missing"
@@ -2071,7 +2154,7 @@ extension MenuBarItemManager {
         for tag: MenuBarItemTag,
         desiredCache: ItemCache,
         appState: AppState
-    ) -> MacOS27MoveInstruction? {
+    ) async -> MacOS27MoveInstruction? {
         guard let address = desiredCache.address(for: tag) else { return nil }
         let items = desiredCache[address.section]
         guard items.indices.contains(address.index) else { return nil }
@@ -2092,10 +2175,12 @@ extension MenuBarItemManager {
             )
         }
 
+        // Empty sections target the handle just published for this reorder.
+        // The idle Layout cache deliberately omits that handle; resolving it
+        // there can silently discard the user's first cross-section move.
+        let snapshot = await currentMacOS27ReorderSnapshot(appState: appState)
         guard
-            let iceItem = appState.menuBarManager.macOS27Controller
-                .knownItemsForReordering()
-                .first(matching: .nativeBoundary(for: address.section))
+            let iceItem = snapshot.first(matching: .nativeBoundary(for: address.section))
         else {
             return nil
         }
@@ -2230,7 +2315,7 @@ extension MenuBarItemManager {
             if let sourceTag = macOS27PendingMoveOrder.first {
                 let sourceGeneration = macOS27PendingMoveGenerations[sourceTag]
                 guard
-                    let instruction = macOS27MoveInstruction(
+                    let instruction = await macOS27MoveInstruction(
                         for: sourceTag,
                         desiredCache: desiredCache,
                         appState: appState

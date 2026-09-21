@@ -79,6 +79,10 @@ final class MenuBarManager: ObservableObject {
     /// The number of active temporary reveals of items concealed for the Ice Bar.
     private var iceBarRevealDepth = 0
 
+    /// Keep Ice's spacers withdrawn until native overflow has been read once.
+    /// Anonymous AX identities and their images must be rebuilt each launch.
+    private var isDiscoveringNativeItemsAtLaunch = true
+
     /// The managed sections in the menu bar.
     let sections = [
         MenuBarSection(name: .visible),
@@ -142,8 +146,8 @@ final class MenuBarManager: ObservableObject {
             controlPosition
         }
 
-        if macOS27Controller.isLayoutEditing {
-            logNativeVisibilityDecision("showing all items while Layout is editing (reordering: \(macOS27Controller.isReorderInProgress))")
+        if isDiscoveringNativeItemsAtLaunch || macOS27Controller.isLayoutEditing {
+            logNativeVisibilityDecision("revealing for discovery/layout (launch: \(isDiscoveringNativeItemsAtLaunch), reordering: \(macOS27Controller.isReorderInProgress))")
             cancelNativeConcealment()
             if macOS27Controller.isReorderInProgress {
                 nativeHiding.showForLayout(
@@ -257,6 +261,30 @@ final class MenuBarManager: ObservableObject {
         if macOS27Controller.isConcealingItems, !wasConcealing {
             scheduleNativeConcealmentCheck(screen: screen)
         }
+    }
+
+    /// Rebuild concealed item identities before normal hiding can consume the
+    /// first, incomplete cache. This does not start a Layout editing session.
+    @available(macOS 27.0, *)
+    func discoverNativeItemsAtLaunch() async {
+        defer {
+            isDiscoveringNativeItemsAtLaunch = false
+            syncNativeVisibility()
+        }
+        guard let appState, !isMenuBarHiddenBySystem,
+              !isMenuBarHiddenBySystemUserDefaults, !appState.activeSpace.isFullscreen
+        else { return }
+        // Allow MenuBarAgent to publish Ice's own button and withdraw spacers.
+        do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+        await appState.itemManager.revealNativeItemsForDiscovery()
+        guard !Task.isCancelled else { return }
+        // Unlike the coalescing UI refresh, this waits for the actual capture
+        // even if a timer-triggered image update is already in progress.
+        for section in MenuBarSection.Name.allCases {
+            guard !Task.isCancelled else { return }
+            await appState.imageCache.captureMacOS27Images(for: section, onlyIfMissing: false)
+        }
+        logger.notice("Launch discovery completed: hidden=\(appState.itemManager.itemCache[.hidden].count, privacy: .public)")
     }
 
     /// Photographs concealed items that have no picture yet.

@@ -20,10 +20,19 @@ final class UpdatesManager: NSObject, ObservableObject {
 
     /// The underlying updater controller.
     private(set) lazy var updaterController = SPUStandardUpdaterController(
-        startingUpdater: true,
+        startingUpdater: shouldStartUpdater,
         updaterDelegate: self,
         userDriverDelegate: self
     )
+
+    private var shouldStartUpdater: Bool {
+        #if DEBUG || ICE_LOCAL_BUILD
+        // A locally patched build must not be replaced by the release feed.
+        false
+        #else
+        true
+        #endif
+    }
 
     /// The underlying updater.
     var updater: SPUUpdater {
@@ -69,7 +78,10 @@ final class UpdatesManager: NSObject, ObservableObject {
 
     /// Checks for app updates.
     @objc func checkForUpdates() {
-        #if DEBUG
+        #if ICE_LOCAL_BUILD
+        // Local releases have no compatible signed update feed.
+        return
+        #elseif DEBUG
         // Checking for updates hangs in debug mode.
         let alert = NSAlert()
         alert.messageText = "Checking for updates is not supported in debug mode."

@@ -1,3 +1,15 @@
 .DS_Store
 build/
 xcuserdata/
+
+# Generated local packages and signing material must not be published.
+*.app/
+*.dmg
+*.dSYM/
+*.p12
+*.pfx
+*.p8
+*.keychain
+*.keychain-db
+keychain-password
+IceLocalDevelopmentSigning/

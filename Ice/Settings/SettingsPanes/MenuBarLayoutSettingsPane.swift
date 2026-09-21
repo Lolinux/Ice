@@ -52,6 +52,10 @@ struct MenuBarLayoutSettingsPane: View {
                 refreshingAllOwners: true
             )
             guard !Task.isCancelled else { return }
+            if #available(macOS 27.0, *) {
+                await itemManager.revealNativeItemsForLayout()
+            }
+            guard !Task.isCancelled else { return }
             loadState = .finished
             await appState.imageCache.updateCacheWithoutChecks(
                 sections: MenuBarSection.Name.allCases

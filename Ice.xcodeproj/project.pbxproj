@@ -430,7 +430,8 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = "0.12.0-macos27.128";
-				PRODUCT_BUNDLE_IDENTIFIER = com.jordanbaird.Ice;
+				ICE_APP_BUNDLE_IDENTIFIER = com.jordanbaird.Ice;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ICE_APP_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Ice/Ice-Bridging-Header.h";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -464,7 +465,8 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = "0.12.0-macos27.128";
-				PRODUCT_BUNDLE_IDENTIFIER = com.jordanbaird.Ice;
+				ICE_APP_BUNDLE_IDENTIFIER = com.jordanbaird.Ice;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ICE_APP_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Ice/Ice-Bridging-Header.h";
 				SWIFT_EMIT_LOC_STRINGS = YES;

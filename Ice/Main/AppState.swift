@@ -70,8 +70,11 @@ final class AppState: ObservableObject {
 
         appearanceManager.performSetup(with: self)
         hidEventManager.performSetup(with: self)
-        await itemManager.performSetup(with: self)
         imageCache.performSetup(with: self)
+        await itemManager.performSetup(with: self)
+        if #available(macOS 27.0, *) {
+            await menuBarManager.discoverNativeItemsAtLaunch()
+        }
         updatesManager.performSetup(with: self)
         userNotificationManager.performSetup(with: self)
 

@@ -1,112 +1,94 @@
 <div align="center">
-    <img src="Ice/Resources/Assets.xcassets/AppIcon.appiconset/icon_256x256.png" width=200 height=200>
-    <h1>Ice</h1>
+    <img src="Ice/Resources/Assets.xcassets/AppIcon.appiconset/icon_256x256.png" width="160" height="160" alt="Ice icon">
+    <h1>Ice — macOS 27 community fixes</h1>
+    <p>非官方 macOS 27 兼容修复分支 · Unofficial compatibility fork</p>
 </div>
 
-Ice is a powerful menu bar management tool. While its primary function is hiding and showing menu bar items, it aims to cover a wide variety of additional features to make it one of the most versatile menu bar tools available.
+本仓库在 [Ice](https://github.com/jordanbaird/Ice) 和社区
+[macOS 27 适配 PR #997](https://github.com/jordanbaird/Ice/pull/997) 的基础上，
+补充菜单栏原生收缩、图标排列、弹窗定位及重启恢复修复。
+这是社区维护的实验分支，不是 Ice 官方发行版。
 
-![Banner](https://github.com/user-attachments/assets/4423085c-4e4b-4f3d-ad0f-90a217c03470)
+This fork builds on upstream Ice and the community macOS 27 work in PR #997.
+It adds fixes for native overflow, item geometry, popup positioning and restart
+recovery. It is experimental and is not an official Ice release.
 
-[![Download](https://img.shields.io/badge/download-latest-brightgreen?style=flat-square)](https://github.com/jordanbaird/Ice/releases/latest)
-![Platform](https://img.shields.io/badge/platform-macOS-blue?style=flat-square)
-![Requirements](https://img.shields.io/badge/requirements-macOS%2014%2B-fa4e49?style=flat-square)
-[![Sponsor](https://img.shields.io/badge/Sponsor%20%E2%9D%A4%EF%B8%8F-8A2BE2?style=flat-square)](https://github.com/sponsors/jordanbaird)
-[![Website](https://img.shields.io/badge/Website-015FBA?style=flat-square)](https://icemenubar.app)
-[![License](https://img.shields.io/github/license/jordanbaird/Ice?style=flat-square)](LICENSE)
+## 修复内容 / Changes
 
-> [!NOTE]
-> Ice is currently in active development. Some features have not yet been implemented. Download the latest release [here](https://github.com/jordanbaird/Ice/releases/latest) and see the roadmap below for upcoming features.
+Additional changes in this fork, dated **2026-09-20–2026-09-21**:
 
-<a href="https://www.buymeacoffee.com/jordanbaird" target="_blank">
-    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;">
-</a>
+- **图标识别和分组**：使用 MenuBarAgent 当前实际显示的坐标，避免隐藏图标的旧坐标导致识别、分组错误。
+- **拖动排列**：操作前展开系统收缩区域并验证坐标；向空分组移动时读取最新边界。
+- **弹窗定位**：从 Ice Bar 打开的、支持移动的第三方面板对齐菜单栏 Ice 按钮下方。
+- **退出重开恢复**：启动时先读取系统收缩区域、恢复图标分组和图片，再隐藏菜单栏，无需手动进入 Menu Bar Layout。
+- **本地构建签名**：复用本机开发签名，减少反复构建引起的隐私授权失效；禁用本地版本的上游自动更新。
 
-## Install
+The fixes use live hosted geometry, validate native drag targets, position
+new movable popups below Ice, and discover/capture overflow items before hiding
+them at launch. Local builds reuse a persistent signing identity.
 
-### Manual Installation
+## 构建 / Build
 
-Download the "Ice.zip" file from the [latest release](https://github.com/jordanbaird/Ice/releases/latest) and move the unzipped app into your `Applications` folder.
-
-### Homebrew
-
-Install Ice using the following command:
+当前构建脚本面向 **Apple Silicon + macOS 27 + 完整 Xcode 27**。
+iOS SDK 和模拟器不需要安装。本分支未在 Intel 或其他系统版本上验证。
 
 ```sh
-brew install --cask jordanbaird-ice
+git clone --branch codex/macos27-public https://github.com/Lolinux/Ice.git
+cd Ice
+bash Scripts/test-macos27.sh
+bash Scripts/package-release.sh
 ```
 
-## Features/Roadmap
+输出文件位于 `build/release/`。调试构建使用 `bash Scripts/build-debug.sh`。
 
-### Menu bar item management
+第一次构建时，签名脚本会在当前用户的
+`~/Library/Application Support/IceLocalDevelopmentSigning` 创建本地开发证书和专用钥匙串，
+后续构建复用。签名材料不在仓库内，也不随安装包分发。不同机器上的签名身份不同。
 
-- [x] Hide menu bar items
-- [x] "Always-hidden" menu bar section
-- [x] Show hidden menu bar items when hovering over the menu bar
-- [x] Show hidden menu bar items when an empty area in the menu bar is clicked
-- [x] Show hidden menu bar items by scrolling or swiping in the menu bar
-- [x] Automatically rehide menu bar items
-- [x] Hide application menus when they overlap with shown menu bar items
-- [x] Drag and drop interface to arrange individual menu bar items
-- [x] Display hidden menu bar items in a separate bar (e.g. for MacBooks with the notch)
-- [x] Search menu bar items
-- [x] Menu bar item spacing (BETA)
-- [ ] Profiles for menu bar layout
-- [ ] Individual spacer items
-- [ ] Menu bar item groups
-- [ ] Show menu bar items when trigger conditions are met
+The first build creates a local signing identity; later builds on that Mac
+reuse it. Generated apps are **not Developer ID notarized**. This repository
+currently provides source and local build instructions, not a publicly verified
+binary release. Existing privacy permissions are ultimately managed by macOS.
 
-### Menu bar appearance
+- [构建、签名与测试说明 / Build and verification](Scripts/LOCAL-MACOS27.md)
+- [中文使用说明与限制](Scripts/RELEASE-NOTES.zh-CN.md)
+- [上游 macOS 27 实现说明 / Upstream architecture](MACOS27.md)
 
-- [x] Menu bar tint (solid and gradient)
-- [x] Menu bar shadow
-- [x] Menu bar border
-- [x] Custom menu bar shapes (rounded and/or split)
-- [ ] Remove background behind menu bar
-- [ ] Rounded screen corners
-- [ ] Different settings for light/dark mode
+## 安装与权限 / Installation
 
-### Hotkeys
+退出其他 Ice 实例，将本机生成的 `Ice 27.app` 放到 `~/Applications/` 后打开。
+首次使用需要在 macOS 系统设置中授予辅助功能和屏幕录制权限，分别用于菜单栏交互和图标截图。
+请只运行一份 Ice。
 
-- [x] Toggle individual menu bar sections
-- [x] Show the search panel
-- [x] Enable/disable the Ice Bar
-- [x] Show/hide section divider icons
-- [x] Toggle application menus
-- [ ] Enable/disable auto rehide
-- [ ] Temporarily show individual menu bar items
+内部应用标识保留为 `com.jordanbaird.Ice.macos27debug`，用于延续已有本地版本的设置和权限。
+因此系统权限列表可能仍显示旧名称 “Ice 27 Debug”。更换签名身份后可能需要重新授权。
 
-### Other
+## 验证范围与已知限制 / Validation and limitations
 
-- [x] Launch at login
-- [x] Automatic updates
-- [ ] Menu bar widgets
+- 在 Apple Silicon、macOS 27.0（26A428）、Xcode 27 环境测试。
+- 10 组独立测试通过，覆盖坐标匹配、边界、动态标识、图像处理和弹窗位置等。
+- 实机验证过图标排列、隐藏/展开、弹窗定位及多次退出重开；当前测试布局的 10 个隐藏图标能够自动恢复。
+- 启动恢复可能短暂展开系统菜单栏；系统自动隐藏菜单栏或全屏状态下不自动执行这一步。
+- 第三方应用控制弹窗的初始动画，State 等应用仍可能短暂跳动；系统菜单或不支持移动的窗口保持原位置。
+- macOS 27 上搜索、悬停/滚轮展开、自动重新隐藏、图标间距及应用菜单隐藏仍停用。
+- 多显示器、Intel、其他系统版本及全新机器安装尚未实机验证。
 
-## Why does Ice only support macOS 14 and later?
+Runtime testing is currently limited to one Apple Silicon Mac. Third-party
+popup animations and non-movable system menus remain outside this fork's
+control. See the linked notes before building or reporting a problem.
 
-Ice uses a number of system APIs that are available starting in macOS 14. As such, there are no plans to support earlier versions of macOS.
+报告问题时请提供系统版本、构建版本和复现步骤；截图中请遮挡私人信息。
+针对本分支的问题请在本仓库提交，而不是把修改版的问题当作官方发行版的问题。
 
-## Gallery
+## 来源与许可证 / Credits and license
 
-#### Show hidden menu bar items below the menu bar
+- Original Ice: [Jordan Baird and contributors](https://github.com/jordanbaird/Ice).
+- Community macOS 27 foundation: [PR #997](https://github.com/jordanbaird/Ice/pull/997),
+  based here on commit `c3df598f36100b0500fd159a1cfd9ac5d2dc2525`, including its macOS 26 prerequisites.
+- Earlier macOS 27 work: [PR #980](https://github.com/jordanbaird/Ice/pull/980), as credited in the upstream architecture notes.
+- Additional fixes and local build tooling: this fork, maintained at [Lolinux/Ice](https://github.com/Lolinux/Ice).
 
-![Ice Bar](https://github.com/user-attachments/assets/f1429589-6186-4e1b-8aef-592219d49b9b)
-
-#### Drag-and-drop interface to arrange menu bar items
-
-![Menu Bar Layout](https://github.com/user-attachments/assets/095442ba-f2d0-4bb4-9632-91e26ef8d45b)
-
-#### Customize the menu bar's appearance
-
-![Menu Bar Appearance](https://github.com/user-attachments/assets/8c22c185-c3d2-49bb-971e-e1fc17df04b3)
-
-#### Menu bar item search
-
-![Menu Bar Item Search](https://github.com/user-attachments/assets/d1a7df3a-4989-4077-a0b1-8e7d5a1ba5b8)
-
-#### Custom menu bar item spacing
-
-![Menu Bar Item Spacing](https://github.com/user-attachments/assets/b196aa7e-184a-4d4c-b040-502f4aae40a6)
-
-## License
-
-Ice is available under the [GPL-3.0 license](LICENSE).
+保留原作者和贡献者署名，继续使用 [GNU GPLv3](LICENSE)。
+[原版 README](README.upstream.md) 保留供参考，其中的安装链接和功能列表描述的是上游项目。
+Upstream history and attribution are preserved; modifications remain licensed
+under GPLv3. See [LICENSE](LICENSE).
