@@ -26,11 +26,6 @@ final class IceBarPanel: NSPanel {
     /// another app, used on macOS 27 where Ice installs no event taps.
     private var outsideClickMonitor: Any?
 
-    private var nativeImageRefreshTask: Task<Void, Never>?
-    private var holdsNativeReveal = false
-    private(set) var isRefreshingNativeImages = false
-    private(set) var imageRefreshGeneration: UInt64 = 0
-
     /// Creates a new Ice Bar panel.
     init() {
         super.init(
@@ -191,8 +186,10 @@ final class IceBarPanel: NSPanel {
         appState.navigationState.isIceBarPresented = true
         currentSection = section
 
-        // Show cached images immediately on macOS 27, then reveal native items
-        // asynchronously so the periodic image refresh can capture live values.
+        // On macOS 27, refreshing walks every running app's accessibility tree
+        // and routinely hits the timeout, while concealed items can't be read or
+        // captured anyway. Show the cached items at once; the periodic refresh
+        // keeps them current.
         if #unavailable(macOS 27.0) {
             let cacheTask = Task(timeout: .seconds(1)) {
                 await appState.itemManager.cacheItemsIfNeeded()
@@ -232,11 +229,6 @@ final class IceBarPanel: NSPanel {
                 guard let self, isVisible, !frame.contains(NSEvent.mouseLocation) else {
                     return
                 }
-                // Discovery may click Apple's overflow control. That synthetic
-                // click must not dismiss the panel that requested the reveal.
-                if event.cgEvent?.getIntegerValueField(.eventSourceUnixProcessID) == Int64(ProcessInfo.processInfo.processIdentifier) {
-                    return
-                }
                 // MenuBarAgent receives clicks on Ice's own button. Leave those
                 // to the button's action, which closes the Ice Bar; closing it
                 // here would make that action open it again.
@@ -250,33 +242,6 @@ final class IceBarPanel: NSPanel {
                 }
                 hide()
             }
-        }
-        if #available(macOS 27.0, *) {
-            startNativeImageRefresh(section: section)
-        }
-    }
-
-    /// macOS stops drawing concealed items. Keep them drawn while this panel
-    /// is open, instead of displaying startup snapshots of changing numbers.
-    @available(macOS 27.0, *)
-    private func startNativeImageRefresh(section: MenuBarSection.Name) {
-        guard let appState else { return }
-        nativeImageRefreshTask?.cancel()
-        imageRefreshGeneration &+= 1
-        let generation = imageRefreshGeneration
-        isRefreshingNativeImages = false
-        if !holdsNativeReveal {
-            holdsNativeReveal = true
-            appState.menuBarManager.beginIceBarReveal()
-        }
-        nativeImageRefreshTask = Task { [weak self] in
-            // Visibility changes are coalesced for 400 ms by MenuBarManager.
-            do { try await Task.sleep(for: .milliseconds(450)) } catch { return }
-            guard let self, isVisible, imageRefreshGeneration == generation else { return }
-            await appState.itemManager.revealNativeItemsForDiscovery()
-            guard !Task.isCancelled, isVisible, imageRefreshGeneration == generation else { return }
-            isRefreshingNativeImages = true
-            await appState.imageCache.updateCacheWithoutChecks(sections: [section])
         }
     }
 
@@ -292,10 +257,6 @@ final class IceBarPanel: NSPanel {
     }
 
     override func close() {
-        nativeImageRefreshTask?.cancel()
-        nativeImageRefreshTask = nil
-        imageRefreshGeneration &+= 1
-        isRefreshingNativeImages = false
         if let outsideClickMonitor {
             NSEvent.removeMonitor(outsideClickMonitor)
             self.outsideClickMonitor = nil
@@ -304,10 +265,6 @@ final class IceBarPanel: NSPanel {
         contentView = nil
         currentSection = nil
         appState?.navigationState.isIceBarPresented = false
-        if #available(macOS 27.0, *), holdsNativeReveal {
-            holdsNativeReveal = false
-            appState?.menuBarManager.endIceBarReveal()
-        }
     }
 }
 

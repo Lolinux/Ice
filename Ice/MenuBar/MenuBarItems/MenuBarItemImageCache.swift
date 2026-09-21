@@ -291,8 +291,7 @@ final class MenuBarItemImageCache: ObservableObject {
                     MacOS27MenuBarItemProvider.menuBarItems(sourcePIDs: sourcePIDs, namespaces: namespaces)
                 }.value
                 let stableItems = liveItems.filter { item in
-                    guard let after = afterCapture.first(matching: item.tag) else { return false }
-                    return after.isOnScreen && after.bounds == item.bounds
+                    afterCapture.first(matching: item.tag)?.bounds == item.bounds
                 }
                 appendMacOS27Crops(
                     for: stableItems, from: capture, into: &result
@@ -453,18 +452,9 @@ final class MenuBarItemImageCache: ObservableObject {
         var newImages = [MenuBarItemTag: CapturedImage]()
         let controller = appState.menuBarManager.macOS27Controller
         let generation = controller.interactionGeneration
-        let iceBar = appState.menuBarManager.iceBarPanel
-        let imageRefreshGeneration = iceBar.imageRefreshGeneration
-
-        func canCaptureMacOS27Images() -> Bool {
-            !controller.isReorderInProgress && (
-                controller.isLayoutEditing ||
-                    (appState.navigationState.isIceBarPresented && iceBar.isRefreshingNativeImages)
-            )
-        }
 
         if #available(macOS 27.0, *) {
-            guard canCaptureMacOS27Images() else { return }
+            guard controller.isLayoutEditing, !controller.isReorderInProgress else { return }
             let allItems = sections.flatMap { section in
                 appState.itemManager.itemCache.managedItems(for: section)
             }
@@ -501,9 +491,9 @@ final class MenuBarItemImageCache: ObservableObject {
         guard !Task.isCancelled, appState.itemManager.itemCache.displayID == displayID else { return }
         if #available(macOS 27.0, *) {
             guard
-                canCaptureMacOS27Images(),
-                controller.interactionGeneration == generation,
-                iceBar.imageRefreshGeneration == imageRefreshGeneration
+                controller.isLayoutEditing,
+                !controller.isReorderInProgress,
+                controller.interactionGeneration == generation
             else {
                 return
             }
