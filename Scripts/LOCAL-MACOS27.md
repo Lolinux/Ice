@@ -1,4 +1,4 @@
-# Ice 27 local release
+# Ice 27 builds and verification
 
 This branch uses Ice PR #997 at
 `c3df598f36100b0500fd159a1cfd9ac5d2dc2525`, including its macOS 26 prerequisites.
@@ -15,8 +15,7 @@ bash Scripts/package-release.sh
 ```
 
 Packages and SHA-256 checksums are written to `build/release/` (ignored by Git).
-The DMG contains the app, license and Chinese usage notes. The ZIP contains
-only the app. Debug builds remain available through `Scripts/build-debug.sh`.
+Both DMG and ZIP contain the app, license and Chinese usage notes. Debug builds remain available through `Scripts/build-debug.sh`.
 
 Release uses optimized compilation, no debugger-attachment entitlement or
 preview dylib, and no upstream update feed. The internal bundle identifier
@@ -33,8 +32,9 @@ directory is packaged or committed. Do not remove it: replacing the certificate
 changes application identity and can invalidate privacy grants. Signing does
 not change system certificate trust or the default/search-list keychains.
 
-Each generated package is intended for its build machine, not Developer ID notarized public
-redistribution. The native-compatibility build retains the tested runtime
+Generated packages use a self-signed development identity, not a Developer ID
+identity, and are not notarized. Public pre-releases are experimental and have
+not been validated on a clean Mac; Gatekeeper may block downloaded builds. The native-compatibility build retains the tested runtime
 configuration. To verify identity continuity on a disposable changed copy:
 
 ```sh

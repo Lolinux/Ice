@@ -4,8 +4,8 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DERIVED_DATA="${ICE_RELEASE_DERIVED_DATA_PATH:-$HOME/Library/Developer/Xcode/DerivedData/Ice-MacOS27-Release}"
 OUTPUT="${ICE_PACKAGE_OUTPUT:-$PROJECT_ROOT/build/release}"
-VERSION="0.12.0-macos27.local2"
-BUILD_NUMBER=1329
+VERSION="0.12.0-macos27.1"
+BUILD_NUMBER=1330
 mkdir -p "$OUTPUT"
 
 xcodebuild -project "$PROJECT_ROOT/Ice.xcodeproj" -scheme Ice \
@@ -26,6 +26,12 @@ ditto "$DERIVED_DATA/Build/Products/Release/Ice.app" "$APP"
 # A local fork must not advertise the upstream project's release feed.
 /usr/libexec/PlistBuddy -c 'Delete :SUFeedURL' "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Delete :SUPublicEDKey' "$APP/Contents/Info.plist"
+# Debugging symbols retain absolute build-machine paths, including Swift AST
+# locations. Strip those records before signing the public binaries.
+SERVICE="$APP/Contents/XPCServices/MenuBarItemService.xpc"
+xcrun strip -S "$APP/Contents/MacOS/Ice"
+xcrun strip -S "$SERVICE/Contents/MacOS/MenuBarItemService"
+codesign --force --sign - --preserve-metadata=identifier,entitlements,flags "$SERVICE"
 python3 "$PROJECT_ROOT/Scripts/sign-local.py" "$APP"
 python3 - "$APP" <<'PY'
 import pathlib, plistlib, subprocess, sys
@@ -42,6 +48,6 @@ cp "$PROJECT_ROOT/Scripts/RELEASE-NOTES.zh-CN.md" "$STAGING/使用说明.md"
 cp "$PROJECT_ROOT/LICENSE" "$STAGING/LICENSE"
 PACKAGE="Ice-27-$VERSION-arm64"
 hdiutil create -volname 'Ice 27' -srcfolder "$STAGING" -format UDZO -ov "$OUTPUT/$PACKAGE.dmg"
-ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUTPUT/$PACKAGE.zip"
+ditto -c -k --sequesterRsrc "$STAGING" "$OUTPUT/$PACKAGE.zip"
 (cd "$OUTPUT" && shasum -a 256 "$PACKAGE.dmg" "$PACKAGE.zip" > SHA256SUMS.txt)
 printf 'Release package: %s/%s.dmg\n' "$OUTPUT" "$PACKAGE"

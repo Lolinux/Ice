@@ -27,6 +27,14 @@ The fixes use live hosted geometry, validate native drag targets, position
 new movable popups below Ice, and discover/capture overflow items before hiding
 them at launch. Local builds reuse a persistent signing identity.
 
+## 下载 / Download
+
+[**Ice 27 · 0.12.0-macos27.1（预发布）**](https://github.com/Lolinux/Ice/releases/tag/v0.12.0-macos27.1)
+
+提供 DMG、ZIP、对应源码和 SHA-256 校验文件，仅面向 Apple Silicon / macOS 27。
+安装包使用自签名开发证书，**没有 Apple Developer ID 签名或公证**，下载后可能被系统拦截。
+尚未在全新机器上验证；也可以按下面的方法自行构建。
+
 ## 构建 / Build
 
 当前构建脚本面向 **Apple Silicon + macOS 27 + 完整 Xcode 27**。
@@ -46,9 +54,10 @@ bash Scripts/package-release.sh
 后续构建复用。签名材料不在仓库内，也不随安装包分发。不同机器上的签名身份不同。
 
 The first build creates a local signing identity; later builds on that Mac
-reuse it. Generated apps are **not Developer ID notarized**. This repository
-currently provides source and local build instructions, not a publicly verified
-binary release. Existing privacy permissions are ultimately managed by macOS.
+reuse it. Generated apps are **not Developer ID notarized**. The [experimental release](https://github.com/Lolinux/Ice/releases/tag/v0.12.0-macos27.1)
+provides Apple Silicon binaries and matching source. Downloaded builds may be
+blocked by Gatekeeper and have not been validated on a clean Mac. Existing
+privacy permissions are ultimately managed by macOS.
 
 - [构建、签名与测试说明 / Build and verification](Scripts/LOCAL-MACOS27.md)
 - [中文使用说明与限制](Scripts/RELEASE-NOTES.zh-CN.md)
